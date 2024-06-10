@@ -83,6 +83,27 @@ void setup() {
 
     initializeButtonPins();
 
+    ButtonState recentButton = checkButtons(); // Update button states
+
+    // Check the state of button 0 after initializing button states
+    if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
+        currentState = INACTIVE;
+        debug("Button 0 is DOWN during setup. Controller state set to INACTIVE.", DEBUG_LOW);
+    }
+
+    initializeLEDs();
+    resetLEDs();
+
+    debug(stateToString(), DEBUG_LOW);
+}
+
+void setup() {
+    Serial.begin(serialBaudRate); // Initialize console serial
+
+    initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); // Initialize UART communication with black box
+
+    initializeButtonPins();
+
     checkButtons();
 
     initializeLEDs();
@@ -224,7 +245,7 @@ String formatMessage(char inputChar) {
   return formattedMessage;
 }
 
-// Initialize button pins
+// Initialize button pins for input using pullup resistors
 void initializeButtonPins() {
   for (int i = 0; i < 7; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
