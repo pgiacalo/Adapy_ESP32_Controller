@@ -65,15 +65,17 @@ void handleMotorButtons(int buttonId, ButtonStateEnum action);
 void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
 String stateToString();
-void updateButtonState(int buttonId, ButtonStateEnum action);
+void updateButtonState(int buttonId, ButtonStateEnum action, unsigned long actionTime);
 ButtonState checkButtons();
 void initializeButtonPins();
+void initializeButtons();
 void initializeLEDs();
 void cycleLEDs();
 void fadeLED(int pin, int duration);
 void updateLEDState();
 void resetLEDs();
 void debug(const String& msg, int level);
+void updateControllerState(ControllerStateEnum newState);
 
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
@@ -83,14 +85,11 @@ void setup() {
     initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); // Initialize UART communication with black box
 
     initializeButtonPins();
-
-    // Update button states
-    checkButtons();
+    initializeButtons(); // Initialize button states
 
     // Check the state of button 0 after initializing button states
     if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-        currentControllerState = INACTIVE;
-        debug("Button 0 is DOWN during setup. Controller state set to INACTIVE.", DEBUG_LOW);
+        updateControllerState(INACTIVE);
     }
 
     initializeLEDs();
@@ -106,14 +105,11 @@ void loop() {
 
     // Check if Button 0 is stuck
     if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
-        currentButtonStates[0].priorButtonState == BUTTON_UP &&
         (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
-          currentControllerState = BUTTON_0_STUCK;
-          debug("Button 0 is stuck. Controller state set to BUTTON_0_STUCK.", DEBUG_LOW);
-    } else if (currentControllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP){
-        debug("Button 0 is UP: Controller state going from BUTTON_0_STUCK to ARMED", DEBUG_LOW);
-        currentControllerState = ARMED;
-    } else if (currentControllerState == INACTIVE){
+        updateControllerState(BUTTON_0_STUCK);
+    } else if (currentControllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP) {
+        updateControllerState(ARMED);
+    } else if (currentControllerState == INACTIVE) {
         cycleLEDs();
     }
 
@@ -125,7 +121,7 @@ void loop() {
     if (recentButton.buttonId != -1 && recentButton.buttonState != recentButton.priorButtonState) {
         handleButtonAction(recentButton.buttonId, recentButton.buttonState);
     }
-    
+
     updateLEDState();
 
     debug(stateToString(), DEBUG_LOW);
@@ -142,7 +138,8 @@ void onButtonUp(int buttonId) {
 }
 
 void handleButtonAction(int buttonId, ButtonStateEnum action) {
-    updateButtonState(buttonId, action);
+    unsigned long actionTime = millis();
+    updateButtonState(buttonId, action, actionTime);
     if (buttonId == 0) {
         handleButton0(action);
     } else {
@@ -153,21 +150,23 @@ void handleButtonAction(int buttonId, ButtonStateEnum action) {
 
 void handleButton0(ButtonStateEnum action) {
     if (action == BUTTON_DOWN) {
-        // Removed button0PressTime logic since it's now handled in loop()
+        // Ensure priorActionTime is set correctly for button 0
+        if (currentButtonStates[0].priorButtonState == BUTTON_UP) {
+            currentButtonStates[0].priorActionTime = millis();
+        }
     } else {
         if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
             if (currentControllerState == INACTIVE) {
-                currentControllerState = ARMED;
+                updateControllerState(ARMED);
                 sendUARTMessage('A');
             } else if (currentControllerState == ARMED) {
-                currentControllerState = DISARMED;
+                updateControllerState(DISARMED);
                 sendUARTMessage('D');
             } else if (currentControllerState == DISARMED) {
-                currentControllerState = INACTIVE;
+                updateControllerState(INACTIVE);
                 sendUARTMessage('I');
             }
         }
-        currentButtonStates[0].priorActionTime = 0;
     }
     debug(stateToString(), DEBUG_LOW);
 }
@@ -215,12 +214,12 @@ String stateToString() {
     return result;
 }
 
-void updateButtonState(int buttonId, ButtonStateEnum action) {
+void updateButtonState(int buttonId, ButtonStateEnum action, unsigned long actionTime) {
     ButtonState &button = currentButtonStates[buttonId];
     button.priorButtonState = button.buttonState;
     button.priorActionTime = button.actionTime;
     button.buttonState = action;
-    button.actionTime = millis();
+    button.actionTime = actionTime;
     debug("Button " + String(buttonId) + " state updated to " + (action == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
 }
 
@@ -268,6 +267,18 @@ void initializeButtonPins() {
   debug("initializeButtonPins() configured button pins to INPUT_PULLUP", DEBUG_LOW);
 }
 
+// Initialize button states
+void initializeButtons() {
+  for (int i = 0; i < 7; i++) {
+    int reading = digitalRead(buttonPins[i]);
+    ButtonStateEnum state = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
+    unsigned long currentTime = millis();
+    currentButtonStates[i] = {i, state, currentTime, state, currentTime, debounceDelay};
+    debouncers[i].lastReading = reading;
+  }
+  debug("initializeButtons() initialized button states", DEBUG_LOW);
+}
+
 // Read the states of each button and populate currentButtonStates with debounce logic
 ButtonState checkButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
@@ -285,14 +296,7 @@ ButtonState checkButtons() {
         if ((millis() - debouncers[i].lastDebounceTime) > debounceDelay) {
             ButtonStateEnum newState = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
             if (newState != currentButtonStates[i].buttonState) {
-                currentButtonStates[i].priorButtonState = currentButtonStates[i].buttonState;
-                currentButtonStates[i].priorActionTime = currentButtonStates[i].actionTime;
-                currentButtonStates[i].buttonState = newState;
-                currentButtonStates[i].actionTime = millis();
-                
-                // Debug: Button state change
-                debug("Button " + String(i) + " state changed to: " + (currentButtonStates[i].buttonState == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_LOW);
-                
+                updateButtonState(i, newState, millis());
                 if (currentButtonStates[i].actionTime > recentButton.actionTime) {
                     recentButton = currentButtonStates[i];
                 }
@@ -377,5 +381,12 @@ void updateLEDState() {
 void debug(const String& msg, int level) {
     if (currentDebugLevel >= level) {
         Serial.println(msg);
+    }
+}
+
+void updateControllerState(ControllerStateEnum newState) {
+    if (currentControllerState != newState) {
+        currentControllerState = newState;
+        debug("Controller state updated to: " + stateToString(), DEBUG_LOW);
     }
 }
