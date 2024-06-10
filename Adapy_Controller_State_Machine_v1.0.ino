@@ -48,9 +48,8 @@ struct Debounce {
     int lastReading;
 };
 
-ControllerStateEnum currentState = INACTIVE;
-unsigned long button0PressTime = 0;
-const unsigned long button0HoldThreshold = 3000; // 3 seconds threshold
+ControllerStateEnum currentControllerState = DISARMED; // Default to DISARMED
+const unsigned long button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned long debounceDelay = 50; // 50 milliseconds debounce delay
 ButtonState currentButtonStates[7];
 Debounce debouncers[7];
@@ -79,28 +78,56 @@ void debug(const String& msg, int level);
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
 
+    debug("setup() called", DEBUG_LOW);
+
     initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); // Initialize UART communication with black box
 
     initializeButtonPins();
 
+    // Update button states
     checkButtons();
 
+    // Check the state of button 0 after initializing button states
     if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-        currentState = INACTIVE;
+        currentControllerState = INACTIVE;
         debug("Button 0 is DOWN during setup. Controller state set to INACTIVE.", DEBUG_LOW);
     }
 
     initializeLEDs();
     resetLEDs();
 
+    cycleLEDs();
+
     debug(stateToString(), DEBUG_LOW);
 }
 
 void loop() {
     ButtonState recentButton = checkButtons();
+
+    // Check if Button 0 is stuck
+    if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
+        currentButtonStates[0].priorButtonState == BUTTON_UP &&
+        (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
+          currentControllerState = BUTTON_0_STUCK;
+          debug("Button 0 is stuck. Controller state set to BUTTON_0_STUCK.", DEBUG_LOW);
+    } else if (currentControllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP){
+        debug("Button 0 is UP: Controller state going from BUTTON_0_STUCK to ARMED", DEBUG_LOW);
+        currentControllerState = ARMED;
+    } else if (currentControllerState == INACTIVE){
+        cycleLEDs();
+    }
+
+    // Debug: Show most recent button event
+    if (recentButton.buttonId != -1) {
+        debug("Most recent button: " + String(recentButton.buttonId) + ", State: " + (recentButton.buttonState == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
+    }
+
     if (recentButton.buttonId != -1 && recentButton.buttonState != recentButton.priorButtonState) {
         handleButtonAction(recentButton.buttonId, recentButton.buttonState);
     }
+    
+    updateLEDState();
+
     debug(stateToString(), DEBUG_LOW);
     delay(1000); // Button check delay
     yield();
@@ -126,31 +153,27 @@ void handleButtonAction(int buttonId, ButtonStateEnum action) {
 
 void handleButton0(ButtonStateEnum action) {
     if (action == BUTTON_DOWN) {
-        if (millis() - button0PressTime > button0HoldThreshold) {
-            currentState = BUTTON_0_STUCK;
-        } else if (button0PressTime == 0) {
-            button0PressTime = millis();
-        }
+        // Removed button0PressTime logic since it's now handled in loop()
     } else {
-        if (button0PressTime > 0 && millis() - button0PressTime <= button0HoldThreshold) {
-            if (currentState == INACTIVE) {
-                currentState = ARMED;
+        if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
+            if (currentControllerState == INACTIVE) {
+                currentControllerState = ARMED;
                 sendUARTMessage('A');
-            } else if (currentState == ARMED) {
-                currentState = DISARMED;
+            } else if (currentControllerState == ARMED) {
+                currentControllerState = DISARMED;
                 sendUARTMessage('D');
-            } else if (currentState == DISARMED) {
-                currentState = INACTIVE;
+            } else if (currentControllerState == DISARMED) {
+                currentControllerState = INACTIVE;
                 sendUARTMessage('I');
             }
         }
-        button0PressTime = 0;
+        currentButtonStates[0].priorActionTime = 0;
     }
     debug(stateToString(), DEBUG_LOW);
 }
 
 void handleMotorButtons(int buttonId, ButtonStateEnum action) {
-    if (currentState == ARMED && action == BUTTON_DOWN) {
+    if (currentControllerState == ARMED && action == BUTTON_DOWN) {
         if (buttonId == 1) {
             moveMotor(1, "FORWARD");
         } else if (buttonId == 2) {
@@ -173,9 +196,11 @@ void moveMotor(int motorId, const char* direction) {
     sendUARTMessage(command[0]);
 }
 
+// Returns a one line string showing the current Controller State and the current state of all of the buttons (i.e., UP or DOWN)
+// For example: Disarmed, 0:UP, 1:UP, 2:UP, 3:UP, 4:UP, 5:UP, 6:UP
 String stateToString() {
     String result;
-    switch (currentState) {
+    switch (currentControllerState) {
         case INACTIVE: result = "Inactive"; break;
         case ARMED: result = "Armed"; break;
         case DISARMED: result = "Disarmed"; break;
@@ -229,7 +254,7 @@ String formatMessage(char inputChar) {
   return formattedMessage;
 }
 
-// Initialize button pins for input using pullup resistors
+// Initialize button pins
 void initializeButtonPins() {
   for (int i = 0; i < 7; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
@@ -325,7 +350,7 @@ void fadeLED(int pin, int duration) {
 }
 
 void updateLEDState() {
-    switch (currentState) {
+    switch (currentControllerState) {
         case INACTIVE:
             digitalWrite(greenLEDPin, LOW);
             digitalWrite(redLEDPin, LOW);
