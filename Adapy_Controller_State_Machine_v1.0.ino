@@ -56,9 +56,10 @@ struct Debounce {
 };
 
 ControllerState currentControllerState = {DISARMED, 0, DISARMED, 0}; // Default to DISARMED
+ButtonState currentButtonStates[7];
+
 const unsigned long button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned long debounceDelay = 50; // 50 milliseconds debounce delay
-ButtonState currentButtonStates[7];
 Debounce debouncers[7];
 
 HardwareSerial uartSerialPort(1);
