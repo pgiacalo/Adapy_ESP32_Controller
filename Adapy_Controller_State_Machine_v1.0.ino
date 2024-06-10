@@ -73,7 +73,7 @@ void handleMotorButtons(int buttonId, ButtonStateEnum action);
 void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
 String stateToString();
-void updateButtonState(int buttonId, ButtonStateEnum action);
+bool updateButtonState(int buttonId, ButtonStateEnum action);
 ButtonState checkButtons();
 void initializeButtonPins();
 void initializeButtonStates();
@@ -83,7 +83,7 @@ void fadeLED(int pin, int duration);
 void updateLEDState();
 void resetLEDs();
 void debug(const String& msg, int level);
-void updateControllerState(ControllerStateEnum newState);
+bool updateControllerState(ControllerStateEnum newState);
 void initializeControllerState();
 
 void setup() {
@@ -98,8 +98,12 @@ void setup() {
     initializeButtonStates(); // Initialize button states
 
     // Check the state of button 0 after initializing button states
+    bool stateChanged = false;
     if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-        updateControllerState(INACTIVE);
+        stateChanged = updateControllerState(INACTIVE);
+        if (stateChanged){
+          //TODO - what behavior 
+        }
     }
 
     initializeLEDs();
@@ -139,25 +143,33 @@ void loop() {
     yield();
 }
 
+/**
+ * Public interface
+ * Call this function whenever a button goes from UP to DOWN
+ */
 void onButtonDown(int buttonId) {
     handleButtonAction(buttonId, BUTTON_DOWN);
 }
 
+/**
+ * Public interface
+ * Call this function whenever a button goes from DOWN to UP 
+ */
 void onButtonUp(int buttonId) {
     handleButtonAction(buttonId, BUTTON_UP);
 }
 
 void handleButtonAction(int buttonId, ButtonStateEnum action) {
-    updateButtonState(buttonId, action);
+    bool buttonStateChanged = updateButtonState(buttonId, action);
     if (buttonId == 0) {
-        handleButton0(action);
+        handleButton0(action, buttonStateChanged);
     } else {
-        handleMotorButtons(buttonId, action);
+        handleMotorButtons(buttonId, action, buttonStateChanged);
     }
     updateLEDState();
 }
 
-void handleButton0(ButtonStateEnum action) {
+void handleButton0(ButtonStateEnum action, bool buttonStateChanged) {
     if (action == BUTTON_DOWN) {
         // Ensure priorActionTime is set correctly for button 0
         if (currentButtonStates[0].priorButtonState == BUTTON_UP) {
@@ -166,7 +178,7 @@ void handleButton0(ButtonStateEnum action) {
     } else {
         if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
             if (currentControllerState.controllerState == INACTIVE) {
-                updateControllerState(ARMED);
+                bool stateChanged = updateControllerState(ARMED);
                 sendUARTMessage('A');
             } else if (currentControllerState.controllerState == ARMED) {
                 updateControllerState(DISARMED);
@@ -180,7 +192,7 @@ void handleButton0(ButtonStateEnum action) {
     debug(stateToString(), DEBUG_LOW);
 }
 
-void handleMotorButtons(int buttonId, ButtonStateEnum action) {
+void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged) {
     if (currentControllerState.controllerState == ARMED && action == BUTTON_DOWN) {
         if (buttonId == 1) {
             moveMotor(1, "FORWARD");
@@ -223,14 +235,21 @@ String stateToString() {
     return result;
 }
 
-void updateButtonState(int buttonId, ButtonStateEnum action) {
+/**
+ * Updates the state of the given buttonId and returns true if its button state changed, else false 
+ */
+bool updateButtonState(int buttonId, ButtonStateEnum action) {
     unsigned long actionTime = millis();
     ButtonState &button = currentButtonStates[buttonId];
-    button.priorButtonState = button.buttonState;
-    button.priorActionTime = button.actionTime;
-    button.buttonState = action;
-    button.actionTime = actionTime;
-    debug("Button " + String(buttonId) + " state updated to " + (action == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
+    if (button.buttonState != action) {
+        button.priorButtonState = button.buttonState;
+        button.priorActionTime = button.actionTime;
+        button.buttonState = action;
+        button.actionTime = actionTime;
+        debug("Button " + String(buttonId) + " state updated to " + (action == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
+        return true;
+    }
+    return false;
 }
 
 // Initialize the UART port
@@ -289,7 +308,9 @@ void initializeButtonStates() {
   debug("initializeButtonStates() initialized button states", DEBUG_LOW);
 }
 
-// Read the states of each button and populate currentButtonStates with debounce logic
+/**
+ * Reads the state of each button and returns the ButtonState of the button that changed state most recently
+ */
 ButtonState checkButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
@@ -394,14 +415,19 @@ void debug(const String& msg, int level) {
     }
 }
 
-void updateControllerState(ControllerStateEnum newState) {
+/**
+ * Updates the currentControllerState and returns true if the state changed, else false 
+ */
+bool updateControllerState(ControllerStateEnum newState) {
     if (currentControllerState.controllerState != newState) {
         currentControllerState.priorControllerState = currentControllerState.controllerState;
         currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
         currentControllerState.controllerState = newState;
         currentControllerState.stateTransitionTime = millis();
         debug("Controller state updated to: " + stateToString(), DEBUG_LOW);
+        return true;
     }
+    return false;
 }
 
 void initializeControllerState() {
