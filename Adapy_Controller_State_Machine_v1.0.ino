@@ -22,6 +22,12 @@ int currentDebugLevel = DEBUG_LOW;
 constexpr long serialBaudRate = 19200;  // baud rate for USB console output containing debug messages
 constexpr long uartBaudRate = 19200;  // baud rate for UART communication (19200 is the required rate for Adapt Solutions controller messages)
 
+enum ControllerLockOwner {
+    NONE,
+    PHYSICAL,
+    VIRTUAL
+};
+
 enum ControllerStateEnum {
     INACTIVE,
     ARMED,
@@ -48,6 +54,8 @@ struct ControllerState {
     unsigned long stateTransitionTime;
     ControllerStateEnum priorControllerState;
     unsigned long priorStateTransitionTime;
+    ControllerLockOwner lockOwner;
+    unsigned long lockOwnerTimestamp;
 };
 
 struct Debounce {
@@ -65,11 +73,15 @@ Debounce debouncers[7];
 HardwareSerial uartSerialPort(1);
 
 // Function declarations
-void onButtonDown(int buttonId);
-void onButtonUp(int buttonId);
+
+void onPhysicalButtonDown(int buttonId);  //Interface
+void onPhysicalButtonUp(int buttonId);    //Interface
+void onVirtualButtonDown(int buttonId);   //Interface
+void onVirtualButtonUp(int buttonId);     //Interface
+
 void handleButtonAction(int buttonId, ButtonStateEnum action);
-void handleButton0(ButtonStateEnum action);
-void handleMotorButtons(int buttonId, ButtonStateEnum action);
+void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
+void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
 void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
 String stateToString();
@@ -115,6 +127,12 @@ void setup() {
 }
 
 void loop() {
+    // Check if lockOwner has timed out
+    if (currentControllerState.lockOwner != NONE && (millis() - currentControllerState.lockOwnerTimestamp > 8000)) {
+        currentControllerState.lockOwner = NONE;
+        debug("Lock owner timed out, reset to NONE", DEBUG_LOW);
+    }
+
     ButtonState recentButton = checkButtons();
 
     // Check if Button 0 is stuck
@@ -144,20 +162,49 @@ void loop() {
 }
 
 /**
- * Public interface
- * Call this function whenever a button goes from UP to DOWN
+ * Interface
  */
-void onButtonDown(int buttonId) {
-    handleButtonAction(buttonId, BUTTON_DOWN);
+void onPhysicalButtonDown(int buttonId) {
+    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
+        currentControllerState.lockOwner = PHYSICAL;
+        currentControllerState.lockOwnerTimestamp = millis();
+        handleButtonAction(buttonId, BUTTON_DOWN);
+    }
 }
 
 /**
- * Public interface
- * Call this function whenever a button goes from DOWN to UP 
+ * Interface
  */
-void onButtonUp(int buttonId) {
-    handleButtonAction(buttonId, BUTTON_UP);
+void onPhysicalButtonUp(int buttonId) {
+    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
+        currentControllerState.lockOwner = PHYSICAL;
+        currentControllerState.lockOwnerTimestamp = millis();
+        handleButtonAction(buttonId, BUTTON_UP);
+    }
 }
+
+/**
+ * Interface
+ */
+void onVirtualButtonDown(int buttonId) {
+    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
+        currentControllerState.lockOwner = VIRTUAL;
+        currentControllerState.lockOwnerTimestamp = millis();
+        handleButtonAction(buttonId, BUTTON_DOWN);
+    }
+}
+
+/**
+ * Interface
+ */
+void onVirtualButtonUp(int buttonId) {
+    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
+        currentControllerState.lockOwner = VIRTUAL;
+        currentControllerState.lockOwnerTimestamp = millis();
+        handleButtonAction(buttonId, BUTTON_UP);
+    }
+}
+
 
 void handleButtonAction(int buttonId, ButtonStateEnum action) {
     bool buttonStateChanged = updateButtonState(buttonId, action);
@@ -326,8 +373,7 @@ ButtonState checkButtons() {
         
         if ((millis() - debouncers[i].lastDebounceTime) > debounceDelay) {
             ButtonStateEnum newState = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
-            if (newState != currentButtonStates[i].buttonState) {
-                updateButtonState(i, newState);
+            if (updateButtonState(i, newState)) {
                 if (currentButtonStates[i].actionTime > recentButton.actionTime) {
                     recentButton = currentButtonStates[i];
                 }
@@ -432,7 +478,6 @@ bool updateControllerState(ControllerStateEnum newState) {
 
 void initializeControllerState() {
     unsigned long currentTime = millis();
-    currentControllerState = {DISARMED, currentTime, DISARMED, currentTime};
+    currentControllerState = {DISARMED, currentTime, DISARMED, currentTime, NONE, 0};
     debug("initializeControllerState() initialized controller state", DEBUG_LOW);
 }
-
