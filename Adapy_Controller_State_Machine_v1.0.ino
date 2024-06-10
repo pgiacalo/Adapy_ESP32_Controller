@@ -22,12 +22,6 @@ int currentDebugLevel = DEBUG_LOW;
 constexpr long serialBaudRate = 19200;  // baud rate for USB console output containing debug messages
 constexpr long uartBaudRate = 19200;  // baud rate for UART communication (19200 is the required rate for Adapt Solutions controller messages)
 
-enum ControllerLockOwner {
-    NONE,
-    PHYSICAL,
-    VIRTUAL
-};
-
 enum ControllerStateEnum {
     INACTIVE,
     ARMED,
@@ -38,6 +32,12 @@ enum ControllerStateEnum {
 enum ButtonStateEnum {
     BUTTON_UP,
     BUTTON_DOWN
+};
+
+enum ControllerLockOwner {
+    NONE,
+    PHYSICAL,
+    VIRTUAL
 };
 
 struct ButtonState {
@@ -63,7 +63,7 @@ struct Debounce {
     int lastReading;
 };
 
-ControllerState currentControllerState = {DISARMED, 0, DISARMED, 0}; // Default to DISARMED
+ControllerState currentControllerState = {DISARMED, 0, DISARMED, 0, NONE, 0}; // Default to DISARMED
 ButtonState currentButtonStates[7];
 
 const unsigned long button0HoldThreshold = 8000; // 8 seconds threshold
@@ -73,12 +73,10 @@ Debounce debouncers[7];
 HardwareSerial uartSerialPort(1);
 
 // Function declarations
-
-void onPhysicalButtonDown(int buttonId);  //Interface
-void onPhysicalButtonUp(int buttonId);    //Interface
-void onVirtualButtonDown(int buttonId);   //Interface
-void onVirtualButtonUp(int buttonId);     //Interface
-
+void onPhysicalButtonDown(int buttonId);
+void onPhysicalButtonUp(int buttonId);
+void onVirtualButtonDown(int buttonId);
+void onVirtualButtonUp(int buttonId);
 void handleButtonAction(int buttonId, ButtonStateEnum action);
 void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
 void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
@@ -97,6 +95,10 @@ void resetLEDs();
 void debug(const String& msg, int level);
 bool updateControllerState(ControllerStateEnum newState);
 void initializeControllerState();
+void checkLockOwner();
+void handleControllerStateTransitions(ButtonState recentButton);
+void handleSendCommands(ButtonState recentButton);
+void handleLEDs();
 
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
@@ -127,84 +129,69 @@ void setup() {
 }
 
 void loop() {
+    checkLockOwner();
+
+    ButtonState recentButton = checkButtons();
+
+    handleControllerStateTransitions(recentButton);
+
+    handleSendCommands(recentButton);
+
+    handleLEDs();
+
+    debug(stateToString(), DEBUG_LOW);
+
+    delay(1000); // Adjust delay as necessary
+    yield();
+}
+
+void checkLockOwner() {
     // Check if lockOwner has timed out
     if (currentControllerState.lockOwner != NONE && (millis() - currentControllerState.lockOwnerTimestamp > 8000)) {
         currentControllerState.lockOwner = NONE;
         debug("Lock owner timed out, reset to NONE", DEBUG_LOW);
     }
-
-    ButtonState recentButton = checkButtons();
-
-    // Check if Button 0 is stuck
-    if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
-        (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
-        updateControllerState(BUTTON_0_STUCK);
-    } else if (currentControllerState.controllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP) {
-        updateControllerState(ARMED);
-    } else if (currentControllerState.controllerState == INACTIVE) {
-        cycleLEDs();
-    }
-
-    // Debug: Show most recent button event
-    if (recentButton.buttonId != -1) {
-        debug("Most recent button: " + String(recentButton.buttonId) + ", State: " + (recentButton.buttonState == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
-    }
-
-    if (recentButton.buttonId != -1 && recentButton.buttonState != recentButton.priorButtonState) {
-        handleButtonAction(recentButton.buttonId, recentButton.buttonState);
-    }
-
-    updateLEDState();
-
-    debug(stateToString(), DEBUG_LOW);
-    delay(1000); // Button check delay
-    yield();
 }
 
 /**
- * Interface
+ * Public interface
+ * Call this function whenever a button goes from UP to DOWN
  */
 void onPhysicalButtonDown(int buttonId) {
     if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
         currentControllerState.lockOwner = PHYSICAL;
         currentControllerState.lockOwnerTimestamp = millis();
-        handleButtonAction(buttonId, BUTTON_DOWN);
+        updateButtonState(buttonId, BUTTON_DOWN);
     }
 }
 
 /**
- * Interface
+ * Public interface
+ * Call this function whenever a button goes from DOWN to UP 
  */
 void onPhysicalButtonUp(int buttonId) {
     if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
         currentControllerState.lockOwner = PHYSICAL;
         currentControllerState.lockOwnerTimestamp = millis();
-        handleButtonAction(buttonId, BUTTON_UP);
+        updateButtonState(buttonId, BUTTON_UP);
     }
 }
 
-/**
- * Interface
- */
 void onVirtualButtonDown(int buttonId) {
     if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
         currentControllerState.lockOwner = VIRTUAL;
         currentControllerState.lockOwnerTimestamp = millis();
-        handleButtonAction(buttonId, BUTTON_DOWN);
+        updateButtonState(buttonId, BUTTON_DOWN);
     }
 }
 
-/**
- * Interface
- */
 void onVirtualButtonUp(int buttonId) {
     if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
         currentControllerState.lockOwner = VIRTUAL;
         currentControllerState.lockOwnerTimestamp = millis();
-        handleButtonAction(buttonId, BUTTON_UP);
+        updateButtonState(buttonId, BUTTON_UP);
     }
 }
-
 
 void handleButtonAction(int buttonId, ButtonStateEnum action) {
     bool buttonStateChanged = updateButtonState(buttonId, action);
@@ -478,6 +465,82 @@ bool updateControllerState(ControllerStateEnum newState) {
 
 void initializeControllerState() {
     unsigned long currentTime = millis();
-    currentControllerState = {DISARMED, currentTime, DISARMED, currentTime, NONE, 0};
+    currentControllerState = {DISARMED, currentTime, DISARMED, currentTime};
     debug("initializeControllerState() initialized controller state", DEBUG_LOW);
+}
+
+void handleControllerStateTransitions(ButtonState recentButton) {
+    // Check if Button 0 is stuck
+    if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
+        (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
+        updateControllerState(BUTTON_0_STUCK);
+    } else if (currentControllerState.controllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP) {
+        updateControllerState(ARMED);
+    }
+
+    // Handle transitions based on recent button action
+    if (recentButton.buttonId == 0 && recentButton.buttonState == BUTTON_UP) {
+        if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
+            if (currentControllerState.controllerState == INACTIVE) {
+                updateControllerState(ARMED);
+            } else if (currentControllerState.controllerState == ARMED) {
+                updateControllerState(DISARMED);
+            } else if (currentControllerState.controllerState == DISARMED) {
+                updateControllerState(INACTIVE);
+            }
+        }
+    }
+}
+
+void handleSendCommands(ButtonState recentButton) {
+    if (recentButton.buttonId != -1 && recentButton.buttonState == BUTTON_DOWN) {
+        if (recentButton.buttonId == 0) {
+            if (currentControllerState.controllerState == ARMED) {
+                sendUARTMessage('A');
+            } else if (currentControllerState.controllerState == DISARMED) {
+                sendUARTMessage('D');
+            } else if (currentControllerState.controllerState == INACTIVE) {
+                sendUARTMessage('I');
+            }
+        } else {
+            bool buttonStateChanged = updateButtonState(recentButton.buttonId, recentButton.buttonState);
+            handleMotorButtons(recentButton.buttonId, recentButton.buttonState, buttonStateChanged);
+        }
+    }
+}
+
+void handleLEDs() {
+    // Stub implementation: Add LED handling logic here
+    switch (currentControllerState.controllerState) {
+        case INACTIVE:
+            // Example: Turn on the blue LED
+            digitalWrite(greenLEDPin, LOW);
+            digitalWrite(redLEDPin, LOW);
+            digitalWrite(blueLEDPin, HIGH);
+            break;
+        case ARMED:
+            // Example: Turn on the green LED
+            digitalWrite(greenLEDPin, HIGH);
+            digitalWrite(redLEDPin, LOW);
+            digitalWrite(blueLEDPin, LOW);
+            break;
+        case DISARMED:
+            // Example: Turn on the red LED
+            digitalWrite(greenLEDPin, LOW);
+            digitalWrite(redLEDPin, HIGH);
+            digitalWrite(blueLEDPin, LOW);
+            break;
+        case BUTTON_0_STUCK:
+            // Example: Turn on the red and blue LEDs
+            digitalWrite(greenLEDPin, LOW);
+            digitalWrite(redLEDPin, HIGH);
+            digitalWrite(blueLEDPin, HIGH);
+            break;
+        default:
+            // Example: Turn off all LEDs
+            digitalWrite(greenLEDPin, LOW);
+            digitalWrite(redLEDPin, LOW);
+            digitalWrite(blueLEDPin, LOW);
+            break;
+    }
 }
