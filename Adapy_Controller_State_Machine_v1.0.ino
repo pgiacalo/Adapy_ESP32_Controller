@@ -83,28 +83,12 @@ void setup() {
 
     initializeButtonPins();
 
-    ButtonState recentButton = checkButtons(); // Update button states
+    checkButtons();
 
-    // Check the state of button 0 after initializing button states
     if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
         currentState = INACTIVE;
         debug("Button 0 is DOWN during setup. Controller state set to INACTIVE.", DEBUG_LOW);
     }
-
-    initializeLEDs();
-    resetLEDs();
-
-    debug(stateToString(), DEBUG_LOW);
-}
-
-void setup() {
-    Serial.begin(serialBaudRate); // Initialize console serial
-
-    initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); // Initialize UART communication with black box
-
-    initializeButtonPins();
-
-    checkButtons();
 
     initializeLEDs();
     resetLEDs();
