@@ -416,6 +416,10 @@ ButtonState checkButtons() {
             break;
     }
 
+    if (recentButton.buttonId == -1) {
+        debug("Returning placeholder ButtonState object", DEBUG_LOW);
+    }
+
     return recentButton;
 }
 
@@ -440,7 +444,7 @@ ButtonState checkPhysicalButtons() {
                 }
             }
         }
-        
+
         debouncers[i].lastReading = reading;
     }
 
@@ -467,8 +471,6 @@ ButtonState checkVirtualButtons() {
 
     return recentButton;
 }
-
-
 
 void initializeLEDs() {
   pinMode(greenLEDPin, OUTPUT);
