@@ -64,7 +64,7 @@ struct Debounce {
 
 // Default values for ButtonState
 constexpr ButtonStateEnum DEFAULT_BUTTON_STATE = BUTTON_UP;
-constexpr ButtonStateEnum DEFAULT_PRIOR_BUTTON_STATE = BUTTON_UP;
+constexpr ButtonStateEnum DEFAULT_PRIOR_BUTTON_STATE = BUTTON_DOWN;
 
 // Default values for ControllerState
 constexpr ControllerStateEnum DEFAULT_CONTROLLER_STATE = DISARMED;
@@ -74,12 +74,14 @@ constexpr ControllerLockOwner DEFAULT_LOCK_OWNER = PHYSICAL;
 ControllerState currentControllerState;
 
 const unsigned int NUMBER_OF_BUTTONS = 7; 
+
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
+Debounce debouncers[NUMBER_OF_BUTTONS];
 
 constexpr unsigned int messageInterval = 340;  // milliseconds, the time between message resends if a button is held down (measured from lastMessageTime)
 const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
-Debounce debouncers[NUMBER_OF_BUTTONS];
+const unsigned int ownerLockTimeout = 8000; // milliseconds
 
 HardwareSerial uartSerialPort(1);
 
@@ -108,7 +110,7 @@ void resetLEDs();
 void debug(const String& msg, int level);
 bool updateControllerState(ControllerStateEnum newState);
 void initializeControllerState();
-void checkLockOwner();
+void checkLockOwnerTimeout();
 void handleControllerStateTransitions(ButtonState recentButton);
 void handleSendCommands(ButtonState recentButton);
 void handleLEDs();
@@ -118,31 +120,34 @@ void setup() {
 
     debug("setup() called", DEBUG_LOW);
 
-    initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); // Initialize UART communication with black box
+    // Initialize UART port (for communication with the Adapt Systems black box)
+    initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); 
 
-    initializeControllerState(); // Initialize controller state
-    initializeButtonPins();
-    initializeButtonStates(); // Initialize button states
+    initializeControllerState();
+    initializeButtonStates();
 
-    // Check the state of button 0 after initializing button states
+    //initialize the ESP32 pins connected to the buttons
+    initializeButtonPins(); 
+    //initialize the ESP32 LEDs
+    initializeLEDs();
+    //at startup, the ESP32 LEDs are cycled thru all colors (matches behavior of Adapt's existing controller)
+    cycleLEDs();
+
+    // Check the state of button 0 at startup 
+    // If button 0 is being held down at startup, the controller buttons are inactivated
     bool stateChanged = false;
     if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
         stateChanged = updateControllerState(INACTIVE);
         if (stateChanged){
-          //TODO - what behavior 
+          //behaviors will be handled functioned called by loop()
         }
     }
-
-    initializeLEDs();
-    resetLEDs();
-
-    cycleLEDs();
 
     debug(stateToString(), DEBUG_LOW);
 }
 
 void loop() {
-    checkLockOwner();
+    checkLockOwnerTimeout();
 
     ButtonState recentButton = checkButtons();
 
@@ -163,11 +168,12 @@ void setLockOwner(ControllerLockOwner newOwner) {
     currentControllerState.lockOwnerTimestamp = millis();
 }
 
-void checkLockOwner() {
-    // Check if lockOwner has timed out
-    if (millis() - currentControllerState.lockOwnerTimestamp > 8000) {
-        setLockOwner(PHYSICAL);
+// Checks if lockOwner has timed out. If timedout, set it to DEFAULT_LOCK_OWNER. 
+void checkLockOwnerTimeout() {
+    if (millis() - currentControllerState.lockOwnerTimestamp > ownerLockTimeout) {
+        setLockOwner(DEFAULT_LOCK_OWNER);
         debug("Lock owner timed out, reset to PHYSICAL", DEBUG_LOW);
+        currentControllerState.lockOwnerTimestamp = millis(); // Reset the lockOwnerTimestamp
     }
 }
 
@@ -395,6 +401,7 @@ void initializeLEDs() {
   pinMode(greenLEDPin, OUTPUT);
   pinMode(redLEDPin, OUTPUT);
   pinMode(blueLEDPin, OUTPUT);
+  resetLEDs();
 }
 
 void resetLEDs() {
