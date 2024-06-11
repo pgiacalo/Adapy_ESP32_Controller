@@ -75,6 +75,10 @@ ControllerState currentControllerState;
 
 const unsigned int NUMBER_OF_BUTTONS = 7; 
 
+ButtonState currentButton;  //holds the state of the most recent button that changed
+ButtonState previousButton; //holds the state of the previous button that changed
+
+
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
@@ -126,6 +130,9 @@ void setup() {
     initializeControllerState();
     initializeButtonStates();
 
+    // on startup there are no previous button event
+    previousButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; 
+
     //initialize the ESP32 pins connected to the buttons
     initializeButtonPins(); 
     //initialize the ESP32 LEDs
@@ -133,25 +140,27 @@ void setup() {
     //at startup, the ESP32 LEDs are cycled thru all colors (matches behavior of Adapt's existing controller)
     cycleLEDs();
 
-    // Check the state of button 0 at startup 
-    // If button 0 is being held down at startup, the controller buttons are inactivated
-    bool stateChanged = false;
-    if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-        stateChanged = updateControllerState(INACTIVE);
-        if (stateChanged){
-          //behaviors will be handled functioned called by loop()
-        }
+    if (currentControllerState.lockOwner == PHYSICAL){
+      // If button 0 is being held down at startup, the controller buttons are inactivated
+      if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
+          bool stateChanged = updateControllerState(INACTIVE);
+          if (stateChanged){
+            //behaviors will be handled functioned called by loop()
+          }
+      }
     }
 
+    debug("setup() complete", DEBUG_LOW);
     debug(stateToString(), DEBUG_LOW);
 }
 
 void loop() {
-    checkLockOwnerTimeout();
+    //TODO - do we want the controller to timeout (matches existing Adapt controller behavior)
+    checkLockOwnerTimeout();  
 
     ButtonState recentButton = checkButtons();
 
-    handleControllerStateTransitions(recentButton);
+    handleControllerStateTransitions(recentButton, previousButton);
 
     handleSendCommands(recentButton);
 
@@ -159,13 +168,21 @@ void loop() {
 
     debug(stateToString(), DEBUG_LOW);
 
+    previousButton = currentButton;
+
     delay(1000); // Adjust delay as necessary
     yield();
 }
 
 void setLockOwner(ControllerLockOwner newOwner) {
-    currentControllerState.lockOwner = newOwner;
-    currentControllerState.lockOwnerTimestamp = millis();
+    if (currentControllerState.lockOwner != newOwner) {
+        currentControllerState.lockOwner = newOwner;
+        currentControllerState.lockOwnerTimestamp = millis();
+        initializeButtonStates(); // Reinitialize button states when the owner changes
+        debug("Lock owner changed and button states initialized", DEBUG_LOW);
+    } else {
+        currentControllerState.lockOwnerTimestamp = millis();
+    }
 }
 
 // Checks if lockOwner has timed out. If timedout, set it to DEFAULT_LOCK_OWNER. 
@@ -353,20 +370,57 @@ void initializeButtonPins() {
 
 // Initialize button states
 void initializeButtonStates() {
-  unsigned long now = millis();
-  for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-    int reading = digitalRead(buttonPins[i]);
-    ButtonStateEnum state = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
-    currentButtonStates[i] = {i, state, now, state, now, debounceDelay};
-    debouncers[i].lastReading = reading;
-  }
-  debug("initializeButtonStates() initialized button states", DEBUG_LOW);
+    switch (currentControllerState.lockOwner) {
+        case PHYSICAL:
+            initializePhysicalButtonStates();
+            break;
+        case VIRTUAL:
+            initializeVirtualButtonStates();
+            break;
+    }
+}
+
+void initializePhysicalButtonStates() {
+    unsigned long now = millis();
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
+        int reading = digitalRead(buttonPins[i]);
+        ButtonStateEnum state = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
+        currentButtonStates[i] = {i, state, now, state, now, debounceDelay};
+        debouncers[i].lastReading = reading;
+    }
+    debug("initializePhysicalButtonStates() initialized physical button states", DEBUG_LOW);
+}
+
+void initializeVirtualButtonStates() {
+    unsigned long now = millis();
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
+        // Assuming virtual buttons might be initialized differently
+        // Example: set all virtual buttons to BUTTON_UP by default
+        currentButtonStates[i] = {i, BUTTON_UP, now, BUTTON_UP, now, debounceDelay};
+        debouncers[i].lastReading = HIGH; // Default to HIGH (not pressed)
+    }
+    debug("initializeVirtualButtonStates() initialized virtual button states", DEBUG_LOW);
 }
 
 /**
  * Reads the state of each button and returns the ButtonState of the button that changed state most recently
  */
 ButtonState checkButtons() {
+    ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
+
+    switch (currentControllerState.lockOwner) {
+        case PHYSICAL:
+            recentButton = checkPhysicalButtons();
+            break;
+        case VIRTUAL:
+            recentButton = checkVirtualButtons();
+            break;
+    }
+
+    return recentButton;
+}
+
+ButtonState checkPhysicalButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
@@ -396,6 +450,29 @@ ButtonState checkButtons() {
 
     return recentButton;
 }
+
+ButtonState checkVirtualButtons() {
+    // Stub implementation for virtual buttons, update as needed
+    ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
+
+    // Implement virtual button logic here
+    // Example:
+    // if (virtualButtonStateChanged()) {
+    //     int buttonId = getVirtualButtonId();
+    //     ButtonStateEnum newState = getVirtualButtonState(buttonId);
+    //     if (updateButtonState(buttonId, newState)) {
+    //         if (currentButtonStates[buttonId].actionTime > recentButton.actionTime) {
+    //             recentButton = currentButtonStates[buttonId];
+    //         }
+    //     }
+    // }
+
+    // Yield to prevent blocking
+    yield();
+
+    return recentButton;
+}
+
 
 void initializeLEDs() {
   pinMode(greenLEDPin, OUTPUT);
@@ -492,7 +569,7 @@ void initializeControllerState() {
     debug("initializeControllerState() initialized controller state", DEBUG_LOW);
 }
 
-void handleControllerStateTransitions(ButtonState recentButton) {
+void handleControllerStateTransitions(ButtonState recentButton, ButtonState previousButton) {
     // Check if Button 0 is stuck
     if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
         (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
@@ -568,4 +645,14 @@ void handleLEDs() {
     }
 }
 
-
+bool equals(const ButtonState& bs1, const ButtonState& bs2) {
+    if (bs1.buttonId == -1 && bs2.buttonId == -1) {
+        return false;
+    }
+    return (bs1.buttonId == bs2.buttonId &&
+            bs1.buttonState == bs2.buttonState &&
+            bs1.actionTime == bs2.actionTime &&
+            bs1.priorButtonState == bs2.priorButtonState &&
+            bs1.priorActionTime == bs2.priorActionTime &&
+            bs1.debounceTime == bs2.debounceTime);
+}
