@@ -35,7 +35,6 @@ enum ButtonStateEnum {
 };
 
 enum ControllerLockOwner {
-    NONE,
     PHYSICAL,
     VIRTUAL
 };
@@ -63,20 +62,34 @@ struct Debounce {
     int lastReading;
 };
 
-ControllerState currentControllerState = {DISARMED, 0, DISARMED, 0, NONE, 0}; // Default to DISARMED
-ButtonState currentButtonStates[7];
+// Default values for ButtonState
+constexpr ButtonStateEnum DEFAULT_BUTTON_STATE = BUTTON_UP;
+constexpr ButtonStateEnum DEFAULT_PRIOR_BUTTON_STATE = BUTTON_UP;
 
-const unsigned long button0HoldThreshold = 8000; // 8 seconds threshold
-const unsigned long debounceDelay = 50; // 50 milliseconds debounce delay
-Debounce debouncers[7];
+// Default values for ControllerState
+constexpr ControllerStateEnum DEFAULT_CONTROLLER_STATE = DISARMED;
+constexpr ControllerStateEnum DEFAULT_PRIOR_CONTROLLER_STATE = DISARMED;
+constexpr ControllerLockOwner DEFAULT_LOCK_OWNER = PHYSICAL;
+
+ControllerState currentControllerState;
+
+const unsigned int NUMBER_OF_BUTTONS = 7; 
+ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
+
+constexpr unsigned int messageInterval = 340;  // milliseconds, the time between message resends if a button is held down (measured from lastMessageTime)
+const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
+const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
+Debounce debouncers[NUMBER_OF_BUTTONS];
 
 HardwareSerial uartSerialPort(1);
 
 // Function declarations
-void onPhysicalButtonDown(int buttonId);
-void onPhysicalButtonUp(int buttonId);
-void onVirtualButtonDown(int buttonId);
-void onVirtualButtonUp(int buttonId);
+void onPhysicalButtonDown(int buttonId);          //public interface
+void onPhysicalButtonUp(int buttonId);            //public interface
+void onVirtualButtonDown(int buttonId);           //public interface
+void onVirtualButtonUp(int buttonId);             //public interface
+void setLockOwner(ControllerLockOwner newOwner);  //public interface
+
 void handleButtonAction(int buttonId, ButtonStateEnum action);
 void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
 void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
@@ -145,11 +158,16 @@ void loop() {
     yield();
 }
 
+void setLockOwner(ControllerLockOwner newOwner) {
+    currentControllerState.lockOwner = newOwner;
+    currentControllerState.lockOwnerTimestamp = millis();
+}
+
 void checkLockOwner() {
     // Check if lockOwner has timed out
-    if (currentControllerState.lockOwner != NONE && (millis() - currentControllerState.lockOwnerTimestamp > 8000)) {
-        currentControllerState.lockOwner = NONE;
-        debug("Lock owner timed out, reset to NONE", DEBUG_LOW);
+    if (millis() - currentControllerState.lockOwnerTimestamp > 8000) {
+        setLockOwner(PHYSICAL);
+        debug("Lock owner timed out, reset to PHYSICAL", DEBUG_LOW);
     }
 }
 
@@ -158,8 +176,7 @@ void checkLockOwner() {
  * Call this function whenever a button goes from UP to DOWN
  */
 void onPhysicalButtonDown(int buttonId) {
-    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
-        currentControllerState.lockOwner = PHYSICAL;
+    if (currentControllerState.lockOwner == PHYSICAL) {
         currentControllerState.lockOwnerTimestamp = millis();
         updateButtonState(buttonId, BUTTON_DOWN);
     }
@@ -170,24 +187,21 @@ void onPhysicalButtonDown(int buttonId) {
  * Call this function whenever a button goes from DOWN to UP 
  */
 void onPhysicalButtonUp(int buttonId) {
-    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == PHYSICAL) {
-        currentControllerState.lockOwner = PHYSICAL;
+    if (currentControllerState.lockOwner == PHYSICAL) {
         currentControllerState.lockOwnerTimestamp = millis();
         updateButtonState(buttonId, BUTTON_UP);
     }
 }
 
 void onVirtualButtonDown(int buttonId) {
-    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
-        currentControllerState.lockOwner = VIRTUAL;
+    if (currentControllerState.lockOwner == VIRTUAL) {
         currentControllerState.lockOwnerTimestamp = millis();
         updateButtonState(buttonId, BUTTON_DOWN);
     }
 }
 
 void onVirtualButtonUp(int buttonId) {
-    if (currentControllerState.lockOwner == NONE || currentControllerState.lockOwner == VIRTUAL) {
-        currentControllerState.lockOwner = VIRTUAL;
+    if (currentControllerState.lockOwner == VIRTUAL) {
         currentControllerState.lockOwnerTimestamp = millis();
         updateButtonState(buttonId, BUTTON_UP);
     }
@@ -262,7 +276,7 @@ String stateToString() {
         default: result = "Unknown"; break;
     }
 
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
         result += ", " + String(i) + ":" + (currentButtonStates[i].buttonState == BUTTON_UP ? "UP" : "DOWN");
     }
 
@@ -318,25 +332,26 @@ String formatMessage(char inputChar) {
 
 // Initialize button pins
 void initializeButtonPins() {
-  for (int i = 0; i < 7; i++) {
+  unsigned long now = millis();
+  for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
     int initialReading = digitalRead(buttonPins[i]);
-    debouncers[i].lastDebounceTime = 0;
+    debouncers[i].lastDebounceTime = now;
     debouncers[i].lastReading = initialReading;
 
     // Also initialize the button states to match the initial readings
-    currentButtonStates[i] = {i, (initialReading == LOW) ? BUTTON_DOWN : BUTTON_UP, millis(), BUTTON_UP, 0, 0};
+    currentButtonStates[i] = {i, (initialReading == LOW) ? BUTTON_DOWN : BUTTON_UP, now, DEFAULT_PRIOR_BUTTON_STATE, now, debounceDelay};
   }
   debug("initializeButtonPins() configured button pins to INPUT_PULLUP", DEBUG_LOW);
 }
 
 // Initialize button states
 void initializeButtonStates() {
-  for (int i = 0; i < 7; i++) {
+  unsigned long now = millis();
+  for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     int reading = digitalRead(buttonPins[i]);
     ButtonStateEnum state = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
-    unsigned long currentTime = millis();
-    currentButtonStates[i] = {i, state, currentTime, state, currentTime, debounceDelay};
+    currentButtonStates[i] = {i, state, now, state, now, debounceDelay};
     debouncers[i].lastReading = reading;
   }
   debug("initializeButtonStates() initialized button states", DEBUG_LOW);
@@ -348,7 +363,7 @@ void initializeButtonStates() {
 ButtonState checkButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
         int reading = digitalRead(buttonPins[i]);
         
         // Debug: Current reading of the button pin
@@ -452,11 +467,12 @@ void debug(const String& msg, int level) {
  * Updates the currentControllerState and returns true if the state changed, else false 
  */
 bool updateControllerState(ControllerStateEnum newState) {
+    unsigned long now = millis();
     if (currentControllerState.controllerState != newState) {
         currentControllerState.priorControllerState = currentControllerState.controllerState;
         currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
         currentControllerState.controllerState = newState;
-        currentControllerState.stateTransitionTime = millis();
+        currentControllerState.stateTransitionTime = now;
         debug("Controller state updated to: " + stateToString(), DEBUG_LOW);
         return true;
     }
@@ -464,8 +480,8 @@ bool updateControllerState(ControllerStateEnum newState) {
 }
 
 void initializeControllerState() {
-    unsigned long currentTime = millis();
-    currentControllerState = {DISARMED, currentTime, DISARMED, currentTime};
+    unsigned long now = millis();
+    currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
     debug("initializeControllerState() initialized controller state", DEBUG_LOW);
 }
 
@@ -544,3 +560,5 @@ void handleLEDs() {
             break;
     }
 }
+
+
