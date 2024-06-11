@@ -142,16 +142,6 @@ void setup() {
     //at startup, the ESP32 LEDs are cycled thru all colors (matches behavior of Adapt's existing controller)
     cycleLEDs();
 
-    if (currentControllerState.lockOwner == PHYSICAL){
-      // If button 0 is being held down at startup, the controller buttons are inactivated
-      if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-          bool stateChanged = updateControllerState(INACTIVE);
-          if (stateChanged){
-            //behaviors will be handled functioned called by loop()
-          }
-      }
-    }
-
     debug("setup() complete", DEBUG_LOW);
     debug(stateToString(), DEBUG_LOW);
 }
@@ -461,26 +451,23 @@ ButtonState checkPhysicalButtons() {
 }
 
 ButtonState checkVirtualButtons() {
-    // Stub implementation for virtual buttons, update as needed
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
-    // Implement virtual button logic here
-    // Example:
-    // if (virtualButtonStateChanged()) {
-    //     int buttonId = getVirtualButtonId();
-    //     ButtonStateEnum newState = getVirtualButtonState(buttonId);
-    //     if (updateButtonState(buttonId, newState)) {
-    //         if (currentButtonStates[buttonId].actionTime > recentButton.actionTime) {
-    //             recentButton = currentButtonStates[buttonId];
-    //         }
-    //     }
-    // }
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
+        // Assuming the virtual button states are stored similarly to physical buttons
+        if (buttonChanged(currentButtonStates[i])) {
+            if (currentButtonStates[i].actionTime > recentButton.actionTime) {
+                recentButton = currentButtonStates[i];
+            }
+        }
+    }
 
     // Yield to prevent blocking
     yield();
 
     return recentButton;
 }
+
 
 
 void initializeLEDs() {
@@ -566,16 +553,23 @@ bool updateControllerState(ControllerStateEnum newState) {
         currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
         currentControllerState.controllerState = newState;
         currentControllerState.stateTransitionTime = now;
-        debug("Controller state updated to: " + stateToString(), DEBUG_LOW);
+        debug("updateControllerState(): Controller state updated to: " + stateToString(), DEBUG_LOW);
         return true;
     }
     return false;
 }
 
 void initializeControllerState() {
-    unsigned long now = millis();
-    currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
-    debug("initializeControllerState() initialized controller state", DEBUG_LOW);
+    if (currentControllerState.lockOwner == PHYSICAL){
+      // If Button 0 is being held down at startup, all the other controller buttons are inactivated
+      if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
+          updateControllerState(INACTIVE);
+      }
+    } else {
+      unsigned long now = millis();
+      currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
+    }
+    debug("initializeControllerState() initialized state to: " + stateToString(), DEBUG_LOW);
 }
 
 void handleControllerStateTransitions(ButtonState recentButton) {
