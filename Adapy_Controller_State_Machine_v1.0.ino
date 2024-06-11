@@ -71,14 +71,16 @@ constexpr ControllerStateEnum DEFAULT_CONTROLLER_STATE = DISARMED;
 constexpr ControllerStateEnum DEFAULT_PRIOR_CONTROLLER_STATE = DISARMED;
 constexpr ControllerLockOwner DEFAULT_LOCK_OWNER = PHYSICAL;
 
-ControllerState currentControllerState;
-
 const unsigned int NUMBER_OF_BUTTONS = 7; 
 
+ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
+unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
+
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
 constexpr unsigned int messageInterval = 340;  // milliseconds, the time between message resends if a button is held down (measured from lastMessageTime)
+const unsigned int armedTimeout = 8000; // milliseconds
 const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
 const unsigned int ownerLockTimeout = 8000; // milliseconds
@@ -86,12 +88,17 @@ const unsigned int ownerLockTimeout = 8000; // milliseconds
 HardwareSerial uartSerialPort(1);
 
 // Function declarations
-void onPhysicalButtonDown(int buttonId);          //public interface
-void onPhysicalButtonUp(int buttonId);            //public interface
-void onVirtualButtonDown(int buttonId);           //public interface
-void onVirtualButtonUp(int buttonId);             //public interface
-void setLockOwner(ControllerLockOwner newOwner);  //public interface
+// PUBLIC FUNCTIONS - YOU CAN CALL THESE 3 FUNCTIONS
+void onVirtualButtonDown(int buttonId); //public interface
+void onVirtualButtonUp(int buttonId);   //public interface
+void setVirtualLockOwner();             //public interface
 
+// Private Function declarations 
+// DO NOT CALL ANY OF THESE FUNCTION - THEY ARE ALL PRIVATE
+void onPhysicalButtonDown(int buttonId);
+void onPhysicalButtonUp(int buttonId);
+void setPhysicalLockOwner();
+void setVirtualLockOwner();
 void handleButtonAction(int buttonId, ButtonStateEnum action);
 void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
 void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
@@ -114,6 +121,8 @@ void checkLockOwnerTimeout();
 void handleControllerStateTransitions(ButtonState recentButton);
 void handleSendCommands(ButtonState recentButton);
 void handleLEDs();
+bool buttonChanged(const ButtonState& button);
+bool buttonHeldDown(const ButtonState& button);
 
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
@@ -149,7 +158,7 @@ void setup() {
 
 void loop() {
     //TODO - do we want the controller to timeout (matches existing Adapt controller behavior)
-    checkLockOwnerTimeout();  
+    //checkLockOwnerTimeout();  
 
     ButtonState recentButton = checkButtons();
 
@@ -163,6 +172,14 @@ void loop() {
 
     delay(1000); // Adjust delay as necessary
     yield();
+}
+
+void setPhysicalLockOwner() {
+  setLockOwner(PHYSICAL);
+}
+
+void setVirtualLockOwner() {
+  setLockOwner(VIRTUAL);
 }
 
 void setLockOwner(ControllerLockOwner newOwner) {
@@ -302,6 +319,7 @@ String stateToString() {
  */
 bool updateButtonState(int buttonId, ButtonStateEnum action) {
     unsigned long actionTime = millis();
+    recentButtonChangeTime = actionTime;  //updates the global variable keeping track of the most recent button change
     ButtonState &button = currentButtonStates[buttonId];
     if (button.buttonState != action) {
         button.priorButtonState = button.buttonState;
@@ -561,26 +579,97 @@ void initializeControllerState() {
 }
 
 void handleControllerStateTransitions(ButtonState recentButton) {
-    // Check if Button 0 is stuck
-    if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
-        (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
-        updateControllerState(BUTTON_0_STUCK);
-    } else if (currentControllerState.controllerState == BUTTON_0_STUCK && currentButtonStates[0].buttonState == BUTTON_UP) {
-        updateControllerState(ARMED);
+
+    // The INACTIVE state only happens if Button 0 is DOWN when the controller is first turned on
+    // Releasing Button 0 when in the INACTIVE state changes the state to ARMED
+    if (currentControllerState.controllerState == INACTIVE){
+      if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_UP)){
+          updateControllerState(ARMED);
+          debug("1) Controller state updated from INACTIVE to ARMED: " + stateToString(), DEBUG_LOW);
+          return;
+      } else {
+        // Only releasing Button 0 can get the controller working
+        // All the other buttons are inactivated, so just return without changing the state
+        debug("2) Controller state is still INACTIVE: " + stateToString(), DEBUG_LOW);
+        return;
+      }
     }
 
-    // Handle transitions based on recent button action
-    if (recentButton.buttonId == 0 && recentButton.buttonState == BUTTON_UP) {
-        if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
-            if (currentControllerState.controllerState == INACTIVE) {
-                updateControllerState(ARMED);
-            } else if (currentControllerState.controllerState == ARMED) {
-                updateControllerState(DISARMED);
-            } else if (currentControllerState.controllerState == DISARMED) {
-                updateControllerState(INACTIVE);
-            }
-        }
+    // Check if Button 0 is stuck DOWN or if Button 0 was stuck and has just been released
+    if (recentButton.buttonId == 0){
+      if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
+          updateControllerState(BUTTON_0_STUCK);
+          debug("6) Controller state updated to BUTTON_0_STUCK: " + stateToString(), DEBUG_LOW);
+          return;
+      } else if (currentControllerState.controllerState == BUTTON_0_STUCK && buttonChangedTo(recentButton, BUTTON_UP)) {
+          updateControllerState(ARMED);
+          debug("7) Controller state updated from BUTTON_0_STUCK to ARMED: " + stateToString(), DEBUG_LOW);
+          return;
+      } else if(currentControllerState.controllerState == DISARMED && buttonChangedTo(recentButton, BUTTON_DOWN)){
+          updateControllerState(ARMED);
+          debug("8) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_LOW);
+          return;
+      }
     }
+
+    if (currentControllerState.controllerState == ARMED){
+      if (recentButton.buttonId == 0 && buttonHeldDownFor(recentButton, button0HoldThreshold)){
+          updateControllerState(BUTTON_0_STUCK);
+          debug("3) Controller state updated from ARMED to BUTTON_0_STUCK: " + stateToString(), DEBUG_LOW);
+          return;
+      }
+    }
+
+    if (currentControllerState.controllerState == DISARMED){
+      if (recentButton.buttonId == 0 && buttonChanged(recentButton)){
+          updateControllerState(ARMED);
+          debug("4) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_LOW);
+          return;
+      }
+    }
+
+    // Check if we've been 
+    if (currentControllerState.controllerState == ARMED){
+      if (currentControllerState.stateTransitionTime > armedTimeout 
+            && (millis() - recentButtonChangeTime) > armedTimeout){
+          updateControllerState(DISARMED);
+          debug("5) Controller state updated from ARMED to DISARMED (>timeout): " + stateToString(), DEBUG_LOW);
+          return;
+      }
+    }
+
+}
+
+/** 
+ * Returns true if the buttonState has changed since its priorButtonState, else false 
+ */
+bool buttonChanged(const ButtonState& button) {
+    return (button.buttonState != button.priorButtonState
+            && button.actionTime > button.priorActionTime);
+}
+
+/** 
+ * Returns true if the buttonState has changed since its priorButtonState, else false 
+ */
+bool buttonChangedTo(const ButtonState& button, ButtonStateEnum newState) {
+    return (button.buttonState == newState
+            && button.priorButtonState != newState
+            && button.actionTime > button.priorActionTime);
+}
+
+/** 
+ * Returns true if the button is being held down, else false
+ */
+bool buttonHeldDown(const ButtonState& button) {
+    return (button.buttonState == BUTTON_DOWN 
+            && button.buttonState == button.priorButtonState 
+            && button.actionTime > button.priorActionTime);
+}
+
+bool buttonHeldDownFor(const ButtonState& button, unsigned long timeInMillis) {
+    return (button.buttonState == BUTTON_DOWN 
+            && button.buttonState == button.priorButtonState 
+            && (millis() - button.priorActionTime) > timeInMillis);
 }
 
 void handleSendCommands(ButtonState recentButton) {
@@ -636,14 +725,3 @@ void handleLEDs() {
     }
 }
 
-bool equals(const ButtonState& bs1, const ButtonState& bs2) {
-    if (bs1.buttonId == -1 && bs2.buttonId == -1) {
-        return false;
-    }
-    return (bs1.buttonId == bs2.buttonId &&
-            bs1.buttonState == bs2.buttonState &&
-            bs1.actionTime == bs2.actionTime &&
-            bs1.priorButtonState == bs2.priorButtonState &&
-            bs1.priorActionTime == bs2.priorActionTime &&
-            bs1.debounceTime == bs2.debounceTime);
-}
