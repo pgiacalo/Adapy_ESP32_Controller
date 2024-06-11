@@ -75,10 +75,6 @@ ControllerState currentControllerState;
 
 const unsigned int NUMBER_OF_BUTTONS = 7; 
 
-ButtonState currentButton;  //holds the state of the most recent button that changed
-ButtonState previousButton; //holds the state of the previous button that changed
-
-
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
@@ -130,9 +126,6 @@ void setup() {
     initializeControllerState();
     initializeButtonStates();
 
-    // on startup there are no previous button event
-    previousButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; 
-
     //initialize the ESP32 pins connected to the buttons
     initializeButtonPins(); 
     //initialize the ESP32 LEDs
@@ -160,15 +153,13 @@ void loop() {
 
     ButtonState recentButton = checkButtons();
 
-    handleControllerStateTransitions(recentButton, previousButton);
+    handleControllerStateTransitions(recentButton);
 
     handleSendCommands(recentButton);
 
     handleLEDs();
 
     debug(stateToString(), DEBUG_LOW);
-
-    previousButton = currentButton;
 
     delay(1000); // Adjust delay as necessary
     yield();
@@ -569,7 +560,7 @@ void initializeControllerState() {
     debug("initializeControllerState() initialized controller state", DEBUG_LOW);
 }
 
-void handleControllerStateTransitions(ButtonState recentButton, ButtonState previousButton) {
+void handleControllerStateTransitions(ButtonState recentButton) {
     // Check if Button 0 is stuck
     if (currentButtonStates[0].buttonState == BUTTON_DOWN &&
         (millis() - currentButtonStates[0].priorActionTime > button0HoldThreshold)) {
