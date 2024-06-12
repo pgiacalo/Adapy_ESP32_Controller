@@ -1,9 +1,10 @@
 #include <Arduino.h>
 
-// GPIO pins for all 7 buttons (#0 thru #6)
+// GPIO pins for all 7 buttons (Controller buttons #0 thru #6)
 constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
 
-const char messagesArmed[] = {'A', 'D', 'E', 'B', 'F', 'C'};
+// The letter commands sent to the Adapt Systems black box by each of the buttons (for on-design operations)
+const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
@@ -80,7 +81,7 @@ ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
 unsigned int recentCommandTime = 0;  // the most recent time when a command was sent via UART 
-const unsigned int timeBetweenCommands = 333; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
+const unsigned int timeBetweenCommands = 1000; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
@@ -105,14 +106,14 @@ void onVirtualButtonDown(int buttonId);
 void onVirtualButtonUp(int buttonId);
 void onPhysicalButtonDown(int buttonId);
 void onPhysicalButtonUp(int buttonId);
-void handleButtonAction(int buttonId, ButtonStateEnum action);
-void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
-void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
-void moveMotor(int motorId, const char* direction);
+// void handleButtonAction(int buttonId, ButtonStateEnum action);
+// void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
+// void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
+// void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
 String stateToString(); //returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
-ButtonState checkButtons();
+ButtonState scanButtonStates();
 void initializeButtonPins();
 void initializeButtonStates();
 void initializeLEDs();
@@ -143,9 +144,11 @@ void setup() {
     initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); 
     debug("setup() UART initialized", DEBUG_PRIORITY_LOW);
 
+    initializeTimes();
+
     //initialize the ESP32 pins connected to the buttons
     initializeButtonPins(); 
-    checkButtons();
+    scanButtonStates();
 
     //initializeButtonStates
     debug("setup() calling initializeButtonStates()", DEBUG_PRIORITY_LOW);
@@ -171,7 +174,9 @@ void loop() {
     //TODO - do we want the controller to timeout (matches the existing Adapt controller behavior)
     //checkLockOwnerTimeout();
 
-    ButtonState recentButtonEvent = checkButtons();
+    // Scans the state of all the buttons and returns the one with the most recent status change.
+    // For physical buttons, this scan also updates the currentButtonStates array, based on current button positions. 
+    ButtonState recentButtonEvent = scanButtonStates();
 
     handleControllerStateTransitions(recentButtonEvent);
 
@@ -278,62 +283,62 @@ void onVirtualButtonUp(int buttonId) {
     }
 }
 
-void handleButtonAction(int buttonId, ButtonStateEnum action) {
-    bool buttonStateChanged = updateButtonState(buttonId, action);
-    if (buttonId == 0) {
-        handleButton0(action, buttonStateChanged);
-    } else {
-        handleMotorButtons(buttonId, action, buttonStateChanged);
-    }
-    updateLEDState();
-}
+// void handleButtonAction(int buttonId, ButtonStateEnum action) {
+//     bool buttonStateChanged = updateButtonState(buttonId, action);
+//     if (buttonId == 0) {
+//         handleButton0(action, buttonStateChanged);
+//     } else {
+//         handleMotorButtons(buttonId, action, buttonStateChanged);
+//     }
+//     updateLEDState();
+// }
 
-void handleButton0(ButtonStateEnum action, bool buttonStateChanged) {
-    if (action == BUTTON_DOWN) {
-        // Ensure priorActionTime is set correctly for button 0
-        if (currentButtonStates[0].priorButtonState == BUTTON_UP) {
-            currentButtonStates[0].priorActionTime = millis();
-        }
-    } else {
-        if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
-            if (currentControllerState.controllerState == INACTIVE) {
-                bool stateChanged = updateControllerState(ARMED);
-                sendUARTMessage('A');
-            } else if (currentControllerState.controllerState == ARMED) {
-                updateControllerState(DISARMED);
-                sendUARTMessage('D');
-            } else if (currentControllerState.controllerState == DISARMED) {
-                updateControllerState(INACTIVE);
-                sendUARTMessage('I');
-            }
-        }
-    }
-    debug(stateToString(), DEBUG_PRIORITY_LOW);
-}
+// void handleButton0(ButtonStateEnum action, bool buttonStateChanged) {
+//     if (action == BUTTON_DOWN) {
+//         // Ensure priorActionTime is set correctly for button 0
+//         if (currentButtonStates[0].priorButtonState == BUTTON_UP) {
+//             currentButtonStates[0].priorActionTime = millis();
+//         }
+//     } else {
+//         if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
+//             if (currentControllerState.controllerState == INACTIVE) {
+//                 bool stateChanged = updateControllerState(ARMED);
+//                 sendUARTMessage('A');
+//             } else if (currentControllerState.controllerState == ARMED) {
+//                 updateControllerState(DISARMED);
+//                 sendUARTMessage('D');
+//             } else if (currentControllerState.controllerState == DISARMED) {
+//                 updateControllerState(INACTIVE);
+//                 sendUARTMessage('I');
+//             }
+//         }
+//     }
+//     debug(stateToString(), DEBUG_PRIORITY_LOW);
+// }
 
-void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged) {
-    if (currentControllerState.controllerState == ARMED && action == BUTTON_DOWN) {
-        if (buttonId == 1) {
-            moveMotor(1, "FORWARD");
-        } else if (buttonId == 2) {
-            moveMotor(1, "REVERSE");
-        } else if (buttonId == 3) {
-            moveMotor(2, "FORWARD");
-        } else if (buttonId == 4) {
-            moveMotor(2, "REVERSE");
-        } else if (buttonId == 5) {
-            moveMotor(3, "FORWARD");
-        } else if (buttonId == 6) {
-            moveMotor(3, "REVERSE");
-        }
-    }
-}
+// void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged) {
+//     if (currentControllerState.controllerState == ARMED && action == BUTTON_DOWN) {
+//         if (buttonId == 1) {
+//             moveMotor(1, "FORWARD");
+//         } else if (buttonId == 2) {
+//             moveMotor(1, "REVERSE");
+//         } else if (buttonId == 3) {
+//             moveMotor(2, "FORWARD");
+//         } else if (buttonId == 4) {
+//             moveMotor(2, "REVERSE");
+//         } else if (buttonId == 5) {
+//             moveMotor(3, "FORWARD");
+//         } else if (buttonId == 6) {
+//             moveMotor(3, "REVERSE");
+//         }
+//     }
+// }
 
-void moveMotor(int motorId, const char* direction) {
-    char command[20];
-    sprintf(command, "MOTOR %d %s", motorId, direction);
-    sendUARTMessage(command[0]);
-}
+// void moveMotor(int motorId, const char* direction) {
+//     char command[20];
+//     sprintf(command, "MOTOR %d %s", motorId, direction);
+//     sendUARTMessage(command[0]);
+// }
 
 String buttonStateToString(const ButtonState& button) {
     String result = "ButtonState { ";
@@ -380,25 +385,6 @@ String stateToString() {
     }
 
     return result;
-}
-
-/**
- * Updates the state of the given buttonId and returns true if its button state changed, else false 
- */
-bool updateButtonState(int buttonId, ButtonStateEnum action) {
-    unsigned long actionTime = millis();
-    ButtonState &button = currentButtonStates[buttonId];
-    if (button.buttonState != action) {
-        button.priorButtonState = button.buttonState;
-        button.priorActionTime = button.actionTime;
-        button.buttonState = action;
-        button.actionTime = actionTime;
-        // Update the global variable keeping track of the most recent button change
-        recentButtonChangeTime = actionTime;  
-        debug("Button state changed: " + stateToString(), DEBUG_PRIORITY_HIGH);
-        return true;
-    }
-    return false;
 }
 
 // Initialize the UART port
@@ -499,7 +485,7 @@ void initializeVirtualButtonStates() {
 /**
  * Reads the state of each button and returns the ButtonState of the button that changed state most recently
  */
- ButtonState checkButtons() {
+ ButtonState scanButtonStates() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
     switch (currentControllerState.lockOwner) {
@@ -512,11 +498,11 @@ void initializeVirtualButtonStates() {
     }
 
     if (recentButton.buttonId == -1) {
-        // debug("checkButtons() Returning placeholder ButtonState object", DEBUG_PRIORITY_LOW);
+        // debug("scanButtonStates() Returning placeholder ButtonState object", DEBUG_PRIORITY_LOW);
     } else {
         // Update the recentButtonChangeTime here if a real button state change occurred
         recentButtonChangeTime = recentButton.actionTime;
-        // debug("checkButtons() Returning actual ButtonState object", DEBUG_PRIORITY_LOW);
+        // debug("scanButtonStates() Returning actual ButtonState object", DEBUG_PRIORITY_LOW);
     }
 
     return recentButton;
@@ -562,7 +548,6 @@ ButtonState checkVirtualButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-        // Assuming the virtual button states are stored similarly to physical buttons
         if (buttonChanged(currentButtonStates[i])) {
             if (currentButtonStates[i].actionTime > recentButton.actionTime) {
                 recentButton = currentButtonStates[i];
@@ -571,6 +556,25 @@ ButtonState checkVirtualButtons() {
     }
 
     return recentButton;
+}
+
+/**
+ * Updates the state of the given buttonId and returns true if its button state changed, else false 
+ */
+bool updateButtonState(int buttonId, ButtonStateEnum action) {
+    unsigned long actionTime = millis();
+    ButtonState &button = currentButtonStates[buttonId];
+    if (button.buttonState != action) {
+        button.priorButtonState = button.buttonState;
+        button.priorActionTime = button.actionTime;
+        button.buttonState = action;
+        button.actionTime = actionTime;
+        // Update the global variable keeping track of the most recent button change
+        recentButtonChangeTime = actionTime;  
+        debug("Button state changed: " + stateToString(), DEBUG_PRIORITY_HIGH);
+        return true;
+    }
+    return false;
 }
 
 void debug(const String& msg, int messagePriority) {
@@ -710,28 +714,65 @@ bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis)
 }
 
 void transmitCommands(ButtonState recentButton) {
-  if (millis() - recentCommandTime > timeBetweenCommands){
-    if (currentControllerState.controllerState == BUTTON_0_STUCK){
-      sendUARTMessage('H');
-      recentCommandTime = millis();
+    if (currentControllerState.controllerState == INACTIVE) {
+        // do nothing - when INACTIVE, no commands are sent 
+        return;
     }
 
-  }
+    // only send commands periodically, based on the value of timeBetweenCommands
+    if (millis() - recentCommandTime > timeBetweenCommands) {
 
-    // if (recentButton.buttonId != -1 && recentButton.buttonState == BUTTON_DOWN) {
-    //     if (recentButton.buttonId == 0) {
-    //         if (currentControllerState.controllerState == ARMED) {
-    //             sendUARTMessage('A');
-    //         } else if (currentControllerState.controllerState == DISARMED) {
-    //             sendUARTMessage('D');
-    //         } else if (currentControllerState.controllerState == INACTIVE) {
-    //             sendUARTMessage('I');
-    //         }
-    //     } else {
-    //         bool buttonStateChanged = updateButtonState(recentButton.buttonId, recentButton.buttonState);
-    //         handleMotorButtons(recentButton.buttonId, recentButton.buttonState, buttonStateChanged);
-    //     }
-    // }
+        if (currentControllerState.controllerState == BUTTON_0_STUCK) {
+            sendUARTMessage('H');
+            recentCommandTime = millis();
+            return;
+        } 
+
+        if (multipleButtonsDown()) {
+            sendUARTMessage('H');
+            recentCommandTime = millis();
+            return;
+        }
+
+        if (currentControllerState.controllerState == ARMED && recentButton.buttonState == BUTTON_DOWN) {
+            char command = commands[recentButton.buttonId];
+            sendUARTMessage(command);
+            recentCommandTime = millis();
+            return;
+        }
+
+        if (recentButton.buttonId == 0 && recentButton.buttonState == BUTTON_DOWN) {
+            char command = commands[0];
+            sendUARTMessage(command);
+            recentCommandTime = millis();
+            return;
+        }
+
+        if (currentControllerState.controllerState == ARMED) {
+            char command = commands[0];
+            sendUARTMessage(command);
+            recentCommandTime = millis();
+            return;
+        }
+    }
+}
+
+bool multipleButtonsDown() {
+    int downCount = 0;
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
+        if (currentButtonStates[i].buttonState == BUTTON_DOWN) {
+            downCount++;
+            if (downCount > 1) {
+                return true; // Early exit if more than one button is found to be down
+            }
+        }
+    }
+    return false; // No or only one button is down
+}
+
+void initializeTimes(){
+  recentButtonChangeTime = millis();
+  recentCommandTime = millis();  
 }
 
 void initializeLEDs() {
