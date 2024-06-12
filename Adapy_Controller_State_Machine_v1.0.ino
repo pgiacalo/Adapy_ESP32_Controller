@@ -81,14 +81,14 @@ ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
 unsigned int recentCommandTime = 0;  // the most recent time when a command was sent via UART 
-const unsigned int timeBetweenCommands = 1000; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
+const unsigned int timeBetweenCommands = 300; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
 const unsigned int armedTimeout = 8000; // milliseconds
 const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
-const unsigned int ownerLockTimeout = 8000; // milliseconds
+const unsigned int ownerLockTimeout = 9000; // milliseconds
 
 HardwareSerial uartSerialPort(1);
 
@@ -106,10 +106,6 @@ void onVirtualButtonDown(int buttonId);
 void onVirtualButtonUp(int buttonId);
 void onPhysicalButtonDown(int buttonId);
 void onPhysicalButtonUp(int buttonId);
-// void handleButtonAction(int buttonId, ButtonStateEnum action);
-// void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
-// void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
-// void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
 String stateToString(); //returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
@@ -282,63 +278,6 @@ void onVirtualButtonUp(int buttonId) {
         updateButtonState(buttonId, BUTTON_UP);
     }
 }
-
-// void handleButtonAction(int buttonId, ButtonStateEnum action) {
-//     bool buttonStateChanged = updateButtonState(buttonId, action);
-//     if (buttonId == 0) {
-//         handleButton0(action, buttonStateChanged);
-//     } else {
-//         handleMotorButtons(buttonId, action, buttonStateChanged);
-//     }
-//     updateLEDState();
-// }
-
-// void handleButton0(ButtonStateEnum action, bool buttonStateChanged) {
-//     if (action == BUTTON_DOWN) {
-//         // Ensure priorActionTime is set correctly for button 0
-//         if (currentButtonStates[0].priorButtonState == BUTTON_UP) {
-//             currentButtonStates[0].priorActionTime = millis();
-//         }
-//     } else {
-//         if (currentButtonStates[0].priorActionTime > 0 && millis() - currentButtonStates[0].priorActionTime <= button0HoldThreshold) {
-//             if (currentControllerState.controllerState == INACTIVE) {
-//                 bool stateChanged = updateControllerState(ARMED);
-//                 sendUARTMessage('A');
-//             } else if (currentControllerState.controllerState == ARMED) {
-//                 updateControllerState(DISARMED);
-//                 sendUARTMessage('D');
-//             } else if (currentControllerState.controllerState == DISARMED) {
-//                 updateControllerState(INACTIVE);
-//                 sendUARTMessage('I');
-//             }
-//         }
-//     }
-//     debug(stateToString(), DEBUG_PRIORITY_LOW);
-// }
-
-// void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged) {
-//     if (currentControllerState.controllerState == ARMED && action == BUTTON_DOWN) {
-//         if (buttonId == 1) {
-//             moveMotor(1, "FORWARD");
-//         } else if (buttonId == 2) {
-//             moveMotor(1, "REVERSE");
-//         } else if (buttonId == 3) {
-//             moveMotor(2, "FORWARD");
-//         } else if (buttonId == 4) {
-//             moveMotor(2, "REVERSE");
-//         } else if (buttonId == 5) {
-//             moveMotor(3, "FORWARD");
-//         } else if (buttonId == 6) {
-//             moveMotor(3, "REVERSE");
-//         }
-//     }
-// }
-
-// void moveMotor(int motorId, const char* direction) {
-//     char command[20];
-//     sprintf(command, "MOTOR %d %s", motorId, direction);
-//     sendUARTMessage(command[0]);
-// }
 
 String buttonStateToString(const ButtonState& button) {
     String result = "ButtonState { ";
