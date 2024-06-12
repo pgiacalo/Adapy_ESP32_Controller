@@ -3,6 +3,8 @@
 // GPIO pins for all 7 buttons (#0 thru #6)
 constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
 
+const char messagesArmed[] = {'A', 'D', 'E', 'B', 'F', 'C'};
+
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
 constexpr int uartRxPin = 16;
@@ -77,10 +79,11 @@ const unsigned int NUMBER_OF_BUTTONS = 7;
 ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
+unsigned int recentCommandTime = 0;  // the most recent time when a command was sent via UART 
+const unsigned int timeBetweenCommands = 333; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
-constexpr unsigned int messageInterval = 340;  // milliseconds, the time between message resends if a button is held down (measured from lastMessageTime)
 const unsigned int armedTimeout = 8000; // milliseconds
 const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
@@ -118,7 +121,7 @@ bool updateControllerState(ControllerStateEnum newState);
 void initializeControllerState();
 void checkLockOwnerTimeout();
 void handleControllerStateTransitions(ButtonState recentButton);
-void handleSendCommands(ButtonState recentButton);
+void transmitCommands(ButtonState recentButton);
 void handleLEDs();
 void cycleLEDs();
 void fadeLED(int pin, int duration);
@@ -172,7 +175,7 @@ void loop() {
 
     handleControllerStateTransitions(recentButtonEvent);
 
-    // handleSendCommands(recentButtonEvent);
+    transmitCommands(recentButtonEvent);
 
     // handleLEDs();
 
@@ -706,21 +709,29 @@ bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis)
             && (millis() - button.actionTime) > timeoutInMillis);
 }
 
-void handleSendCommands(ButtonState recentButton) {
-    if (recentButton.buttonId != -1 && recentButton.buttonState == BUTTON_DOWN) {
-        if (recentButton.buttonId == 0) {
-            if (currentControllerState.controllerState == ARMED) {
-                sendUARTMessage('A');
-            } else if (currentControllerState.controllerState == DISARMED) {
-                sendUARTMessage('D');
-            } else if (currentControllerState.controllerState == INACTIVE) {
-                sendUARTMessage('I');
-            }
-        } else {
-            bool buttonStateChanged = updateButtonState(recentButton.buttonId, recentButton.buttonState);
-            handleMotorButtons(recentButton.buttonId, recentButton.buttonState, buttonStateChanged);
-        }
+void transmitCommands(ButtonState recentButton) {
+  if (millis() - recentCommandTime > timeBetweenCommands){
+    if (currentControllerState.controllerState == BUTTON_0_STUCK){
+      sendUARTMessage('H');
+      recentCommandTime = millis();
     }
+
+  }
+
+    // if (recentButton.buttonId != -1 && recentButton.buttonState == BUTTON_DOWN) {
+    //     if (recentButton.buttonId == 0) {
+    //         if (currentControllerState.controllerState == ARMED) {
+    //             sendUARTMessage('A');
+    //         } else if (currentControllerState.controllerState == DISARMED) {
+    //             sendUARTMessage('D');
+    //         } else if (currentControllerState.controllerState == INACTIVE) {
+    //             sendUARTMessage('I');
+    //         }
+    //     } else {
+    //         bool buttonStateChanged = updateButtonState(recentButton.buttonId, recentButton.buttonState);
+    //         handleMotorButtons(recentButton.buttonId, recentButton.buttonState, buttonStateChanged);
+    //     }
+    // }
 }
 
 void initializeLEDs() {
