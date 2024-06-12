@@ -475,9 +475,9 @@ ButtonState checkButtons() {
     }
 
     if (recentButton.buttonId == -1) {
-        debug("checkButtons() Returning placeholder ButtonState object", DEBUG_PRIORITY_LOW);
+        // debug("checkButtons() Returning placeholder ButtonState object", DEBUG_PRIORITY_LOW);
     } else {
-        debug("checkButtons() Returning actual ButtonState object", DEBUG_PRIORITY_LOW);
+        // debug("checkButtons() Returning actual ButtonState object", DEBUG_PRIORITY_LOW);
     }
 
     return recentButton;
