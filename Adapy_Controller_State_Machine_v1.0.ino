@@ -13,10 +13,11 @@ constexpr int redLEDPin = 13;
 constexpr int blueLEDPin = 14;
 
 // Debug levels
-constexpr int DEBUG_PRIORITY_HIGH = 2;
+constexpr int DEBUG_PRIORITY_HIGH = 3;
+constexpr int DEBUG_PRIORITY_MEDIUM = 2;
 constexpr int DEBUG_PRIORITY_LOW = 1;
 constexpr int DEBUG_PRIORITY_NONE = 0;
-int currentDebugLevel = DEBUG_PRIORITY_HIGH;
+int debugSettingPriority = DEBUG_PRIORITY_HIGH;
 
 // Serial port parameters
 constexpr long serialBaudRate = 19200;  // baud rate for USB console output containing debug messages
@@ -130,8 +131,10 @@ bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis)
 
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
+    Serial.flush();  // Flush the serial buffer to clear bootloader messages
 
-    debug("setup() called", DEBUG_PRIORITY_LOW);
+    debug("", DEBUG_PRIORITY_HIGH); //linebreak
+    debug("setup() called", DEBUG_PRIORITY_HIGH);
 
     // Initialize UART port (for communication with the Adapt Systems black box)
     initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); 
@@ -157,8 +160,8 @@ void setup() {
     //at startup, the ESP32 LEDs are cycled thru all colors (matches behavior of Adapt's existing controller)
     cycleLEDs();
 
-    debug(stateToString(), DEBUG_PRIORITY_LOW);
-    debug("setup() complete", DEBUG_PRIORITY_LOW);
+    debug(stateToString(), DEBUG_PRIORITY_HIGH);
+    debug("setup() complete", DEBUG_PRIORITY_HIGH);
 }
 
 void loop() {
@@ -347,19 +350,20 @@ String stateToString() {
     String result;
     switch (currentControllerState.controllerState) {
         case INACTIVE: 
-            result = "Inactive"; 
+            result = "INACTIVE"; 
             break;
         case ARMED: 
-            result = "Armed"; 
+            result = "ARMED"; 
             break;
         case DISARMED: 
-            result = "Disarmed"; 
+            result = "DISARMED"; 
             break;
         case BUTTON_0_STUCK: 
-            result = "Button_0 Stuck"; 
+            result = "BUTTON_0_STUCK"; 
             break;
         default: 
-            result = "Unknown"; 
+            //this should never happen
+            result = "---ERROR---"; 
             break;
     }
 
@@ -566,8 +570,8 @@ ButtonState checkVirtualButtons() {
     return recentButton;
 }
 
-void debug(const String& msg, int level) {
-    if (currentDebugLevel <= level) {
+void debug(const String& msg, int messagePriority) {
+    if (messagePriority >= debugSettingPriority) {
         Serial.println(msg);
     }
 }
@@ -598,19 +602,19 @@ void initializeControllerState() {
         // If Button 0 is being held down at startup, all the other controller buttons are inactivated
         if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
             updateControllerState(INACTIVE);
-            debug("Button 0 is DOWN at startup, setting state to INACTIVE", DEBUG_PRIORITY_LOW);
+            debug("Button 0 is DOWN at startup, setting state to INACTIVE", DEBUG_PRIORITY_HIGH);
         } else {
             unsigned long now = millis();
             currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
-            debug("Button 0 is not DOWN, setting state to DEFAULT_CONTROLLER_STATE", DEBUG_PRIORITY_LOW);
+            debug("Button 0 is not DOWN, setting state to DEFAULT_CONTROLLER_STATE", DEBUG_PRIORITY_HIGH);
         }
     } else {
-        debug("Lock owner is not PHYSICAL, setting default states", DEBUG_PRIORITY_LOW);
+        debug("Lock owner is not PHYSICAL, setting default states", DEBUG_PRIORITY_HIGH);
         unsigned long now = millis();
         currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
     }
 
-    debug("initializeControllerState() initialized state to: " + stateToString(), DEBUG_PRIORITY_LOW);
+    debug("initializeControllerState() initialized state to: " + stateToString(), DEBUG_PRIORITY_HIGH);
 }
 
 void handleControllerStateTransitions(ButtonState recentButton) {
@@ -642,12 +646,12 @@ void handleControllerStateTransitions(ButtonState recentButton) {
         if (currentControllerState.controllerState == BUTTON_0_STUCK) {
             if (buttonChangedTo(recentButton, BUTTON_UP)) {
                 updateControllerState(ARMED);
-                debug("7) Controller state updated from BUTTON_0_STUCK to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
+                debug("7) Controller state updated from BUTTON_0_STUCK to ARMED: " + stateToString(), DEBUG_PRIORITY_HIGH);
                 return;
             }
         } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
             updateControllerState(BUTTON_0_STUCK);
-            debug("6) Controller state updated to BUTTON_0_STUCK: " + stateToString(), DEBUG_PRIORITY_LOW);
+            debug("6) Controller state updated to BUTTON_0_STUCK: " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
     }
@@ -656,7 +660,7 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     if (currentControllerState.controllerState == DISARMED) {
         if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_DOWN)) {
             updateControllerState(ARMED);
-            debug("4) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
+            debug("4) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
     }
@@ -665,7 +669,7 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     if (currentControllerState.controllerState == ARMED) {
         if ((millis() - recentButtonChangeTime) > armedTimeout) {
             updateControllerState(DISARMED);
-            debug("5) Controller state updated from ARMED to DISARMED (>timeout): " + stateToString(), DEBUG_PRIORITY_LOW);
+            debug("5) Controller state updated from ARMED to DISARMED (>timeout): " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
     }
