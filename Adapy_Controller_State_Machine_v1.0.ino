@@ -89,16 +89,18 @@ HardwareSerial uartSerialPort(1);
 
 // Function declarations
 // PUBLIC FUNCTIONS - YOU CAN CALL THESE 3 FUNCTIONS
-void onVirtualButtonDown(int buttonId); //public interface
-void onVirtualButtonUp(int buttonId);   //public interface
-void setVirtualLockOwner();             //public interface
-
-// Private Function declarations 
-// DO NOT CALL ANY OF THESE FUNCTION - THEY ARE ALL PRIVATE
-void onPhysicalButtonDown(int buttonId);
-void onPhysicalButtonUp(int buttonId);
+void onButtonDown(int buttonId);  //public interface
+void onButtonUp(int buttonId);    //public interface
 void setPhysicalLockOwner();
 void setVirtualLockOwner();
+ControllerLockOwner getLockOwner();
+
+// Private Function declarations 
+// DO NOT CALL ANY OF THESE FUNCTION
+void onVirtualButtonDown(int buttonId);
+void onVirtualButtonUp(int buttonId);
+void onPhysicalButtonDown(int buttonId);
+void onPhysicalButtonUp(int buttonId);
 void handleButtonAction(int buttonId, ButtonStateEnum action);
 void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
 void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
@@ -110,10 +112,6 @@ ButtonState checkButtons();
 void initializeButtonPins();
 void initializeButtonStates();
 void initializeLEDs();
-void cycleLEDs();
-void fadeLED(int pin, int duration);
-void updateLEDState();
-void resetLEDs();
 void debug(const String& msg, int level);
 bool updateControllerState(ControllerStateEnum newState);
 void initializeControllerState();
@@ -121,8 +119,14 @@ void checkLockOwnerTimeout();
 void handleControllerStateTransitions(ButtonState recentButton);
 void handleSendCommands(ButtonState recentButton);
 void handleLEDs();
+void cycleLEDs();
+void fadeLED(int pin, int duration);
+void updateLEDState();
+void resetLEDs();
 bool buttonChanged(const ButtonState& button);
 bool buttonHeldDown(const ButtonState& button);
+bool buttonChangedTo(const ButtonState& button, ButtonStateEnum newState);
+bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis);
 
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
@@ -158,14 +162,14 @@ void setup() {
 }
 
 void loop() {
-    //TODO - do we want the controller to timeout (matches existing Adapt controller behavior)
-    //checkLockOwnerTimeout();  
+    //TODO - do we want the controller to timeout (matches the existing Adapt controller behavior)
+    //checkLockOwnerTimeout();
 
-    ButtonState recentButton = checkButtons();
+    ButtonState recentButtonEvent = checkButtons();
 
-    handleControllerStateTransitions(recentButton);
+    handleControllerStateTransitions(recentButtonEvent);
 
-    // handleSendCommands(recentButton);
+    // handleSendCommands(recentButtonEvent);
 
     // handleLEDs();
 
@@ -183,12 +187,18 @@ void setVirtualLockOwner() {
     setLockOwner(VIRTUAL);
 }
 
+ControllerLockOwner getLockOwner() {
+    return currentControllerState.lockOwner;
+}
+
 void setLockOwner(ControllerLockOwner newOwner) {
     if (currentControllerState.lockOwner != newOwner) {
         currentControllerState.lockOwner = newOwner;
         currentControllerState.lockOwnerTimestamp = millis();
-        initializeButtonStates(); // Reinitialize button states when the owner changes
-        debug("Lock owner changed and button states initialized", DEBUG_PRIORITY_LOW);
+        // Reinitialize button states when the owner changes
+        initializeButtonStates();
+        String ownerStr = (newOwner == PHYSICAL) ? "PHYSICAL" : "VIRTUAL";
+        debug("Lock owner changed to " + ownerStr + " and button states initialized", DEBUG_PRIORITY_LOW);
     } else {
         currentControllerState.lockOwnerTimestamp = millis();
     }
@@ -198,8 +208,31 @@ void setLockOwner(ControllerLockOwner newOwner) {
 void checkLockOwnerTimeout() {
     if (millis() - currentControllerState.lockOwnerTimestamp > ownerLockTimeout) {
         setLockOwner(DEFAULT_LOCK_OWNER);
-        debug("Lock owner timed out, reset to PHYSICAL", DEBUG_PRIORITY_LOW);
+        String ownerStr = (DEFAULT_LOCK_OWNER == PHYSICAL) ? "PHYSICAL" : "VIRTUAL";
+        debug("Lock owner timed out, reset to " + ownerStr, DEBUG_PRIORITY_LOW);
         currentControllerState.lockOwnerTimestamp = millis(); // Reset the lockOwnerTimestamp
+    }
+}
+
+void onButtonDown(int buttonId){
+    switch (currentControllerState.lockOwner) {
+        case PHYSICAL:
+            onPhysicalButtonDown(buttonId);
+            break;
+        case VIRTUAL:
+            onVirtualButtonDown(buttonId);
+            break;
+    }
+}
+
+void onButtonUp(int buttonId){
+    switch (currentControllerState.lockOwner) {
+        case PHYSICAL:
+            onPhysicalButtonUp(buttonId);
+            break;
+        case VIRTUAL:
+            onVirtualButtonUp(buttonId);
+            break;
     }
 }
 
@@ -364,21 +397,19 @@ bool updateButtonState(int buttonId, ButtonStateEnum action) {
 // Initialize the UART port
 void initUART(HardwareSerial &serial, long baudRate, int txPin, int rxPin) {
     serial.begin(baudRate, SERIAL_8N1, rxPin, txPin);
-    if (currentDebugLevel >= DEBUG_PRIORITY_LOW) {
-        debug("UART initialized", DEBUG_PRIORITY_LOW);
-    }
+    debug("UART initialized", DEBUG_PRIORITY_LOW);
 }
+
 
 // Send a character over UART (this sends the command to the Adapt Solutions black box)
 void sendUARTMessage(char message) {
     if (uartSerialPort.availableForWrite()) {
         String formattedMessage = formatMessage(message);
         uartSerialPort.print(formattedMessage); // Use print instead of println to avoid adding a newline character
-        if (currentDebugLevel >= DEBUG_PRIORITY_HIGH) {
-            String debugMessage = formattedMessage;
-            debugMessage.replace("\r", "\\r");
-            debug("Sent message: " + debugMessage, DEBUG_PRIORITY_HIGH);
-        }
+        
+        String debugMessage = formattedMessage;
+        debugMessage.replace("\r", "\\r");
+        debug("Sent message: " + debugMessage, DEBUG_PRIORITY_HIGH);
     } else {
         debug("UART buffer full, message not sent", DEBUG_PRIORITY_HIGH);
     }
@@ -484,27 +515,6 @@ void initializeVirtualButtonStates() {
     return recentButton;
 }
 
-// ButtonState checkButtons() {
-//     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
-
-//     switch (currentControllerState.lockOwner) {
-//         case PHYSICAL:
-//             recentButton = checkPhysicalButtons();
-//             break;
-//         case VIRTUAL:
-//             recentButton = checkVirtualButtons();
-//             break;
-//     }
-
-//     if (recentButton.buttonId == -1) {
-//         // debug("checkButtons() Returning placeholder ButtonState object", DEBUG_PRIORITY_LOW);
-//     } else {
-//         // debug("checkButtons() Returning actual ButtonState object", DEBUG_PRIORITY_LOW);
-//     }
-
-//     return recentButton;
-// }
-
 ButtonState checkPhysicalButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
@@ -536,44 +546,8 @@ ButtonState checkPhysicalButtons() {
         debouncers[i].lastReading = reading;
     }
 
-    // Yield to prevent blocking
-    // yield();
-
     return recentButton;
 }
-
-// ButtonState checkPhysicalButtons() {
-//     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
-
-//     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-//         int pin = buttonPins[i];
-//         int reading = digitalRead(pin);
-
-//         // debug("DigitalRead value for button " + String(i) + ": " + String(reading), DEBUG_PRIORITY_HIGH);
-
-//         // Determine if the reading has changed from the last reading
-//         if (reading != debouncers[i].lastReading) {
-//             debouncers[i].lastDebounceTime = millis();
-//         }
-
-//         // Check if the debounce delay has passed
-//         if ((millis() - debouncers[i].lastDebounceTime) > debounceDelay) {
-//             ButtonStateEnum newState = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
-//             if (updateButtonState(i, newState)) {
-//                 if (currentButtonStates[i].actionTime > recentButton.actionTime) {
-//                     recentButton = currentButtonStates[i];
-//                 }
-//             }
-//         }
-
-//         debouncers[i].lastReading = reading;
-//     }
-
-//     // Yield to prevent blocking
-//     // yield();
-
-//     return recentButton;
-// }
 
 ButtonState checkVirtualButtons() {
     debug("checkVirtualButtons() called", DEBUG_PRIORITY_LOW);
@@ -589,14 +563,11 @@ ButtonState checkVirtualButtons() {
         }
     }
 
-    // Yield to prevent blocking
-    // yield();
-
     return recentButton;
 }
 
 void debug(const String& msg, int level) {
-    if (currentDebugLevel >= level) {
+    if (currentDebugLevel <= level) {
         Serial.println(msg);
     }
 }
@@ -699,72 +670,6 @@ void handleControllerStateTransitions(ButtonState recentButton) {
         }
     }
 }
-
-// void handleControllerStateTransitions(ButtonState recentButton) {
-
-//   if (recentButton.buttonId == -1){
-//     // ignore this. it's not a button. it's a button placeholder.
-//     return;
-//   }
-
-//   // The INACTIVE state only happens if Button 0 is DOWN when the controller is first turned on
-//   // Releasing Button 0 when in the INACTIVE state changes the state to ARMED
-//   if (currentControllerState.controllerState == INACTIVE) {
-//       if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_UP)) {
-//           updateControllerState(ARMED);
-//           debug("1) Controller state updated from INACTIVE to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       } else {
-//           // Only releasing Button 0 can get the controller working
-//           // All the other buttons are inactivated, so just return without changing the state
-//           debug("2) Controller state is still INACTIVE: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       }
-//   }
-
-//   // Check if Button 0 is stuck DOWN or if Button 0 was stuck and has just been released
-//   if (recentButton.buttonId == 0) {
-//       if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
-//           updateControllerState(BUTTON_0_STUCK);
-//           debug("6) Controller state updated to BUTTON_0_STUCK: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       } else if (currentControllerState.controllerState == BUTTON_0_STUCK && buttonChangedTo(recentButton, BUTTON_UP)) {
-//           updateControllerState(ARMED);
-//           debug("7) Controller state updated from BUTTON_0_STUCK to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       } else if (currentControllerState.controllerState == DISARMED && buttonChangedTo(recentButton, BUTTON_DOWN)) {
-//           updateControllerState(ARMED);
-//           debug("8) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       }
-//   }
-
-//   if (currentControllerState.controllerState == ARMED) {
-//       if (recentButton.buttonId == 0 && buttonHeldDownFor(recentButton, button0HoldThreshold)) {
-//           updateControllerState(BUTTON_0_STUCK);
-//           debug("3) Controller state updated from ARMED to BUTTON_0_STUCK: " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       }
-//   }
-
-//   // if (currentControllerState.controllerState == DISARMED) {
-//   //     if (recentButton.buttonId == 0 && buttonChanged(recentButton)) {
-//   //         updateControllerState(ARMED);
-//   //         debug("4) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
-//   //         return;
-//   //     }
-//   // }
-
-//   // Check if we've been in the ARMED state for too long
-//   if (currentControllerState.controllerState == ARMED) {
-//       if (currentControllerState.stateTransitionTime > armedTimeout 
-//           && (millis() - recentButtonChangeTime) > armedTimeout) {
-//           updateControllerState(DISARMED);
-//           debug("5) Controller state updated from ARMED to DISARMED (>timeout): " + stateToString(), DEBUG_PRIORITY_LOW);
-//           return;
-//       }
-//   }
-// }
 
 /** 
  * Returns true if the buttonState has changed since its priorButtonState, else false 
