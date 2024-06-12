@@ -104,7 +104,7 @@ void handleButton0(ButtonStateEnum action, bool buttonStateChanged);
 void handleMotorButtons(int buttonId, ButtonStateEnum action, bool buttonStateChanged);
 void moveMotor(int motorId, const char* direction);
 void sendUARTMessage(char message);
-String stateToString();
+String stateToString(); //returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
 ButtonState checkButtons();
 void initializeButtonPins();
@@ -127,24 +127,38 @@ bool buttonHeldDown(const ButtonState& button);
 void setup() {
     Serial.begin(serialBaudRate); // Initialize console serial
 
+    currentDebugLevel = DEBUG_HIGH; // Set to DEBUG_HIGH for testing
+ 
     debug("setup() called", DEBUG_LOW);
 
     // Initialize UART port (for communication with the Adapt Systems black box)
     initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); 
-
-    initializeControllerState();
-    initializeButtonStates();
+    debug("setup() UART initialized", DEBUG_LOW);
 
     //initialize the ESP32 pins connected to the buttons
     initializeButtonPins(); 
+    checkButtons();
+
+    //initializeButtonStates
+    debug("setup() calling initializeButtonStates()", DEBUG_LOW);
+    initializeButtonStates();
+    debug(stateToString(), DEBUG_LOW);
+
+    debug(stateToString(), DEBUG_LOW);
+    debug("setup() calling initializeControllerState()", DEBUG_LOW);
+    //initializeControllerState
+    initializeControllerState();
+    debug(stateToString(), DEBUG_LOW);
+
     //initialize the ESP32 LEDs
     initializeLEDs();
     //at startup, the ESP32 LEDs are cycled thru all colors (matches behavior of Adapt's existing controller)
     cycleLEDs();
 
-    debug("setup() complete", DEBUG_LOW);
     debug(stateToString(), DEBUG_LOW);
+    debug("setup() complete", DEBUG_LOW);
 }
+
 
 void loop() {
     //TODO - do we want the controller to timeout (matches existing Adapt controller behavior)
@@ -152,15 +166,17 @@ void loop() {
 
     ButtonState recentButton = checkButtons();
 
-    handleControllerStateTransitions(recentButton);
+    if (recentButton.buttonId >= 0){
+      handleControllerStateTransitions(recentButton);
+    }
 
-    handleSendCommands(recentButton);
+    // handleSendCommands(recentButton);
 
-    handleLEDs();
+    // handleLEDs();
 
-    debug(stateToString(), DEBUG_LOW);
+    // debug(stateToString(), DEBUG_LOW);
 
-    delay(1000); // Adjust delay as necessary
+    delay(2000); // Adjust delay as necessary
     yield();
 }
 
@@ -290,15 +306,30 @@ void moveMotor(int motorId, const char* direction) {
 String stateToString() {
     String result;
     switch (currentControllerState.controllerState) {
-        case INACTIVE: result = "Inactive"; break;
-        case ARMED: result = "Armed"; break;
-        case DISARMED: result = "Disarmed"; break;
-        case BUTTON_0_STUCK: result = "Button_0 Stuck"; break;
-        default: result = "Unknown"; break;
+        case INACTIVE: 
+            result = "Inactive"; 
+            break;
+        case ARMED: 
+            result = "Armed"; 
+            break;
+        case DISARMED: 
+            result = "Disarmed"; 
+            break;
+        case BUTTON_0_STUCK: 
+            result = "Button_0 Stuck"; 
+            break;
+        default: 
+            result = "Unknown"; 
+            break;
     }
 
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-        result += ", " + String(i) + ":" + (currentButtonStates[i].buttonState == BUTTON_UP ? "UP" : "DOWN");
+        result += ", " + String(i) + ":";
+        if (currentButtonStates[i].buttonState == BUTTON_UP) {
+            result += "UP";
+        } else {
+            result += "DOWN";
+        }
     }
 
     return result;
@@ -309,18 +340,22 @@ String stateToString() {
  */
 bool updateButtonState(int buttonId, ButtonStateEnum action) {
     unsigned long actionTime = millis();
-    recentButtonChangeTime = actionTime;  //updates the global variable keeping track of the most recent button change
+    recentButtonChangeTime = actionTime;  // Updates the global variable keeping track of the most recent button change
     ButtonState &button = currentButtonStates[buttonId];
     if (button.buttonState != action) {
         button.priorButtonState = button.buttonState;
         button.priorActionTime = button.actionTime;
         button.buttonState = action;
         button.actionTime = actionTime;
-        debug("Button " + String(buttonId) + " state updated to " + (action == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
+        String actionStr = (action == BUTTON_DOWN) ? "DOWN" : "UP";
+        debug("Button " + String(buttonId) + " state updated to " + actionStr, DEBUG_HIGH);
+        debug("Button " + String(buttonId) + " prior state was " + String(button.priorButtonState == BUTTON_DOWN ? "DOWN" : "UP"), DEBUG_HIGH);
+        debug("Button " + String(buttonId) + " action time: " + String(actionTime), DEBUG_HIGH);
         return true;
     }
     return false;
 }
+
 
 // Initialize the UART port
 void initUART(HardwareSerial &serial, long baudRate, int txPin, int rxPin) {
@@ -354,18 +389,30 @@ String formatMessage(char inputChar) {
 
 // Initialize button pins
 void initializeButtonPins() {
-  unsigned long now = millis();
-  for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-    pinMode(buttonPins[i], INPUT_PULLUP);
-    int initialReading = digitalRead(buttonPins[i]);
-    debouncers[i].lastDebounceTime = now;
-    debouncers[i].lastReading = initialReading;
+    unsigned long now = millis();
+    for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
+        pinMode(buttonPins[i], INPUT_PULLUP);
+        int initialReading = digitalRead(buttonPins[i]);
+        debouncers[i].lastDebounceTime = now;
+        debouncers[i].lastReading = initialReading;
 
-    // Also initialize the button states to match the initial readings
-    currentButtonStates[i] = {i, (initialReading == LOW) ? BUTTON_DOWN : BUTTON_UP, now, DEFAULT_PRIOR_BUTTON_STATE, now, debounceDelay};
-  }
-  debug("initializeButtonPins() configured button pins to INPUT_PULLUP", DEBUG_LOW);
+        ButtonStateEnum state;
+        if (initialReading == LOW) {
+            state = BUTTON_DOWN;
+        } else {
+            state = BUTTON_UP;
+        }
+
+        // Also initialize the button states to match the initial readings
+        currentButtonStates[i] = {i, state, now, DEFAULT_PRIOR_BUTTON_STATE, now, debounceDelay};
+        
+        // Debug: Initial reading of the button pin
+        String readingStr = (initialReading == LOW) ? "LOW (DOWN)" : "HIGH (UP)";
+        debug("Button " + String(i) + " initial reading: " + readingStr, DEBUG_LOW);
+    }
+    debug("initializeButtonPins() configured button pins to INPUT_PULLUP", DEBUG_LOW);
 }
+
 
 // Initialize button states
 void initializeButtonStates() {
@@ -383,7 +430,12 @@ void initializePhysicalButtonStates() {
     unsigned long now = millis();
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
         int reading = digitalRead(buttonPins[i]);
-        ButtonStateEnum state = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
+        ButtonStateEnum state;
+        if (reading == LOW) {
+            state = BUTTON_DOWN;
+        } else {
+            state = BUTTON_UP;
+        }
         currentButtonStates[i] = {i, state, now, state, now, debounceDelay};
         debouncers[i].lastReading = reading;
     }
@@ -417,7 +469,9 @@ ButtonState checkButtons() {
     }
 
     if (recentButton.buttonId == -1) {
-        debug("Returning placeholder ButtonState object", DEBUG_LOW);
+        debug("checkButtons() Returning placeholder ButtonState object", DEBUG_LOW);
+    } else {
+        debug("checkButtons() Returning actual ButtonState object", DEBUG_LOW);
     }
 
     return recentButton;
@@ -427,15 +481,17 @@ ButtonState checkPhysicalButtons() {
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
-        int reading = digitalRead(buttonPins[i]);
-        
-        // Debug: Current reading of the button pin
-        debug("Button " + String(i) + " reading: " + String(reading == LOW ? "DOWN" : "UP"), DEBUG_HIGH);
-        
+        int pin = buttonPins[i];
+        int reading = digitalRead(pin);
+
+        // debug("DigitalRead value for button " + String(i) + ": " + String(reading), DEBUG_HIGH);
+
+        // Determine if the reading has changed from the last reading
         if (reading != debouncers[i].lastReading) {
             debouncers[i].lastDebounceTime = millis();
         }
-        
+
+        // Check if the debounce delay has passed
         if ((millis() - debouncers[i].lastDebounceTime) > debounceDelay) {
             ButtonStateEnum newState = (reading == LOW) ? BUTTON_DOWN : BUTTON_UP;
             if (updateButtonState(i, newState)) {
@@ -455,6 +511,8 @@ ButtonState checkPhysicalButtons() {
 }
 
 ButtonState checkVirtualButtons() {
+    debug("checkVirtualButtons() called", DEBUG_LOW);
+
     ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0, 0}; // Default to no recent button event
 
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
@@ -551,6 +609,7 @@ void debug(const String& msg, int level) {
 bool updateControllerState(ControllerStateEnum newState) {
     unsigned long now = millis();
     if (currentControllerState.controllerState != newState) {
+        debug("Attempting to update state from " + String(currentControllerState.controllerState) + " to " + String(newState), DEBUG_LOW);
         currentControllerState.priorControllerState = currentControllerState.controllerState;
         currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
         currentControllerState.controllerState = newState;
@@ -562,17 +621,29 @@ bool updateControllerState(ControllerStateEnum newState) {
 }
 
 void initializeControllerState() {
-    if (currentControllerState.lockOwner == PHYSICAL){
-      // If Button 0 is being held down at startup, all the other controller buttons are inactivated
-      if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
-          updateControllerState(INACTIVE);
-      }
+    debug("initializeControllerState() called", DEBUG_LOW);
+
+    if (currentControllerState.lockOwner == PHYSICAL) {
+        debug("Lock owner is PHYSICAL", DEBUG_LOW);
+
+        // If Button 0 is being held down at startup, all the other controller buttons are inactivated
+        if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
+            updateControllerState(INACTIVE);
+            debug("Button 0 is DOWN at startup, setting state to INACTIVE", DEBUG_LOW);
+        } else {
+            unsigned long now = millis();
+            currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
+            debug("Button 0 is not DOWN, setting state to DEFAULT_CONTROLLER_STATE", DEBUG_LOW);
+        }
     } else {
-      unsigned long now = millis();
-      currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
+        debug("Lock owner is not PHYSICAL, setting default states", DEBUG_LOW);
+        unsigned long now = millis();
+        currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
     }
+
     debug("initializeControllerState() initialized state to: " + stateToString(), DEBUG_LOW);
 }
+
 
 void handleControllerStateTransitions(ButtonState recentButton) {
 
@@ -720,4 +791,3 @@ void handleLEDs() {
             break;
     }
 }
-
