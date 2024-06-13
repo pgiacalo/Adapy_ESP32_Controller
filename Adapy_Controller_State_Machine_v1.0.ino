@@ -8,7 +8,7 @@ constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
 // The letter commands sent to the Adapt Systems black box by each of the buttons (for on-design operations)
 const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 
-const bool TEST_PUBLIC_INTERFACE = true;
+const bool TESTING_PUBLIC_INTERFACE = true;
 
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
@@ -189,7 +189,7 @@ void setup() {
     debug(stateToString(), DEBUG_PRIORITY_HIGH);
     debug("setup() complete", DEBUG_PRIORITY_HIGH);
 
-    if (TEST_PUBLIC_INTERFACE){
+    if (TESTING_PUBLIC_INTERFACE){
       // Create the test task
       xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);    
     }
@@ -211,7 +211,8 @@ void loop() {
 
     // debug(stateToString(), DEBUG_PRIORITY_LOW);
 
-    yield();
+    // vTaskDelay(30 / portTICK_PERIOD_MS); // Yields control to FreeRTOS (Delays loop() execution for 30 ms)
+    yield();  //gives other tasks a chance to run  
 }
 
 void setPhysicalLockOwner() {
@@ -320,31 +321,47 @@ String buttonStateToString(const ButtonState& button) {
 }
 
 // Returns a one line string showing the current Controller State and the current state of all of the buttons (i.e., UP or DOWN)
-// For example: Disarmed, 0:UP, 1:UP, 2:UP, 3:UP, 4:UP, 5:UP, 6:UP
+// For example: Lock Owner: PHYSICAL, Disarmed, 0:UP, 1:UP, 2:UP, 3:UP, 4:UP, 5:UP, 6:UP
 String stateToString() {
     String result;
-    switch (currentControllerState.controllerState) {
-        case INACTIVE: 
-            result = "INACTIVE"; 
+
+    // Add lock owner information
+    switch (currentControllerState.lockOwner) {
+        case PHYSICAL:
+            result = "Lock Owner: PHYSICAL, ";
             break;
-        case ARMED: 
-            result = "ARMED"; 
+        case VIRTUAL:
+            result = "Lock Owner: VIRTUAL, ";
             break;
-        case TRANSMITTING: 
-            result = "TRANSMITTING"; 
-            break;
-        case DISARMED: 
-            result = "DISARMED"; 
-            break;
-        case BUTTON_0_STUCK_DOWN: 
-            result = "BUTTON_0_STUCK_DOWN"; 
-            break;
-        default: 
-            //this should never happen
-            result = "---CODING ERROR---"; 
+        default:
+            result = "Lock Owner: UNKNOWN, "; // Should not happen
             break;
     }
 
+    // Add controller state information
+    switch (currentControllerState.controllerState) {
+        case INACTIVE:
+            result += "INACTIVE";
+            break;
+        case ARMED:
+            result += "ARMED";
+            break;
+        case TRANSMITTING:
+            result += "TRANSMITTING";
+            break;
+        case DISARMED:
+            result += "DISARMED";
+            break;
+        case BUTTON_0_STUCK_DOWN:
+            result += "BUTTON_0_STUCK_DOWN";
+            break;
+        default:
+            // This should never happen
+            result += "---CODING ERROR---";
+            break;
+    }
+
+    // Add button states information
     for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
         result += ", " + String(i) + ":";
         if (currentButtonStates[i].buttonState == BUTTON_UP) {
@@ -818,14 +835,18 @@ void testPublicInterface() {
     Serial.println("Starting Public Interface Tests...");
 
     // TEST 1: Setting the lock owner to VIRTUAL
-    Serial.println("\nTEST 1: Setting the lock owner to VIRTUAL");
+    Serial.println("\n--------------------");
+    Serial.println("TEST 1: Setting the lock owner to VIRTUAL");
+    Serial.println("--------------------");
     Serial.println(stateToString());
     setVirtualLockOwner();
     Serial.println(stateToString());
     Serial.println("----END----");
 
     // TEST 2: Getting the lock owner
-    Serial.println("\nTEST 2: Getting the lock owner");
+    Serial.println("\n--------------------");
+    Serial.println("TEST 2: Getting the lock owner");
+    Serial.println("--------------------");
     Serial.println(stateToString());
     ControllerLockOwner lockOwner = getLockOwner();
     Serial.print("Lock Owner: ");
@@ -834,14 +855,18 @@ void testPublicInterface() {
     Serial.println("----END----");
 
     // TEST 3: Setting to ARMED mode
-    Serial.println("\nTEST 3: Setting to ARMED mode");
+    Serial.println("\n--------------------");
+    Serial.println("TEST 3: Setting to ARMED mode");
+    Serial.println("--------------------");
     Serial.println("Pushing button 0 (DOWN)");
     Serial.println(stateToString());
     onButtonDown(0);
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
 
     Serial.println("Releasing button 0 (UP)");
     onButtonUp(0);
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
 
     delay(10000); // Wait for 10 seconds
@@ -849,11 +874,13 @@ void testPublicInterface() {
     Serial.println("----END----");
 
     // TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons
-    Serial.println("\nTEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons");
+    Serial.println("\n--------------------");
+    Serial.println("TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons");
+    Serial.println("--------------------");
     Serial.println("Pushing button 0 (DOWN)");
     Serial.println(stateToString());
     onButtonDown(0);
-    delay(20); // Wait for 20 milliseconds
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
 
     Serial.println("Releasing button 0 (UP)");
@@ -866,6 +893,7 @@ void testPublicInterface() {
         Serial.print(i);
         Serial.println(" (DOWN)");
         onButtonDown(i);
+        delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
 
         delay(2000); // Wait for 2 seconds
@@ -874,6 +902,7 @@ void testPublicInterface() {
         Serial.print(i);
         Serial.println(" (UP)");
         onButtonUp(i);
+        delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
 
         delay(2000); // Wait for 2 seconds
@@ -884,38 +913,71 @@ void testPublicInterface() {
     Serial.println("----END----");
 
     // TEST 5: Holding down 2 buttons simultaneously
-    Serial.println("\nTEST 5: Holding down 2 buttons simultaneously");
+    Serial.println("\n--------------------");
+    Serial.println("TEST 5: Holding down 2 buttons simultaneously");
+    Serial.println("--------------------");
     Serial.println("Pushing button 0 (DOWN)");
     Serial.println(stateToString());
     onButtonDown(0);
-    delay(20); // Wait for 20 milliseconds
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
 
     Serial.println("Releasing button 0 (UP)");
     onButtonUp(0);
-    delay(1000); // Wait for 1 second
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+
+    delay(1000); // Wait for 1 second
 
     Serial.println("Pushing button 1 (DOWN)");
     onButtonDown(1);
-    delay(20); // Wait for 20 milliseconds
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
 
     Serial.println("Pushing button 2 (DOWN)");
     onButtonDown(2);
-    delay(2000); // Wait for 2 seconds
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+
+    delay(2000); // Wait for 2 seconds
 
     Serial.println("Releasing button 2 (UP)");
     onButtonUp(2);
-    delay(2000); // Wait for 2 seconds
+    delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+
+    delay(2000); // Wait for 2 seconds
 
     Serial.println("Releasing button 1 (UP)");
     onButtonUp(1);
+    delay(60); // Wait for 60 milliseconds
+    Serial.println(stateToString());
+
     delay(10000); // Wait for 10 seconds
     Serial.println(stateToString());
     Serial.println("----END----");
+
+    // TEST 6: Setting the lock owner to PHYSICAL
+    Serial.println("\n--------------------");
+    Serial.println("TEST 6: Setting the lock owner to PHYSICAL");
+    Serial.println("--------------------");
+    Serial.println(stateToString());
+    setPhysicalLockOwner();
+    Serial.println(stateToString());
+    Serial.println("----END----");
+    delay(1000); // Wait for 1 seconds
+
+    // TEST 7: Getting the lock owner
+    Serial.println("\n--------------------");
+    Serial.println("TEST 7: Getting the lock owner");
+    Serial.println("--------------------");
+    Serial.println(stateToString());
+    lockOwner = getLockOwner();
+    Serial.print("Lock Owner: ");
+    Serial.println(lockOwner == VIRTUAL ? "VIRTUAL" : "PHYSICAL");
+    Serial.println(stateToString());
+    Serial.println("----END----");
+    delay(1000); // Wait for 1 seconds
 
     Serial.println("Public Interface Tests Completed.");
 }
