@@ -114,20 +114,15 @@ HardwareSerial uartSerialPort(1);
 // Function declarations
 // PUBLIC FUNCTIONS - YOU CAN SAFELY CALL THESE FUNCTIONS
 void setVirtualLockOwner();         //public interface
+void setPhysicalLockOwner();        //public interface
 void onButtonDown(int buttonId);    //public interface
 void onButtonUp(int buttonId);      //public interface
 ControllerLockOwner getLockOwner(); //public interface
 
 // Private Function declarations 
 // DO _NOT_ CALL ANY OF THESE FUNCTIONS
-void testPublicInterface();
-void testTask(void *pvParameters);
-
-void setPhysicalLockOwner();
 void onVirtualButtonDown(int buttonId);
 void onVirtualButtonUp(int buttonId);
-void onPhysicalButtonDown(int buttonId);
-void onPhysicalButtonUp(int buttonId);
 void sendUARTMessage(char message);
 String stateToString(); //returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
@@ -149,6 +144,8 @@ bool buttonChanged(const ButtonState& button);
 bool buttonHeldDown(const ButtonState& button);
 bool buttonChangedTo(const ButtonState& button, ButtonStateEnum newState);
 bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis);
+void testPublicInterface();
+void testTask(void *pvParameters);
 
 void setup() {
     Serial.begin(19200); // Initialize console serial
@@ -250,48 +247,24 @@ void checkLockOwnerTimeout() {
     }
 }
 
-void onButtonDown(int buttonId){
-    switch (currentControllerState.lockOwner) {
-        case PHYSICAL:
-            onPhysicalButtonDown(buttonId);
-            break;
-        case VIRTUAL:
-            onVirtualButtonDown(buttonId);
-            break;
-    }
-}
-
-void onButtonUp(int buttonId){
-    switch (currentControllerState.lockOwner) {
-        case PHYSICAL:
-            onPhysicalButtonUp(buttonId);
-            break;
-        case VIRTUAL:
-            onVirtualButtonUp(buttonId);
-            break;
-    }
-}
-
-/**
- * Public interface
- * Call this function whenever a button goes from UP to DOWN
- */
-void onPhysicalButtonDown(int buttonId) {
+void onButtonDown(int buttonId) {
     if (currentControllerState.lockOwner == PHYSICAL) {
-        currentControllerState.lockOwnerTimestamp = millis();
-        updateButtonState(buttonId, BUTTON_DOWN);
+        Serial.print("Error: onButtonDown called in PHYSICAL mode for virtual button ");
+        Serial.print(buttonId);
+        Serial.println(". This function should only be called in VIRTUAL mode.");
+        return; // or handle the error appropriately
     }
+    onVirtualButtonDown(buttonId);
 }
 
-/**
- * Public interface
- * Call this function whenever a button goes from DOWN to UP 
- */
-void onPhysicalButtonUp(int buttonId) {
+void onButtonUp(int buttonId) {
     if (currentControllerState.lockOwner == PHYSICAL) {
-        currentControllerState.lockOwnerTimestamp = millis();
-        updateButtonState(buttonId, BUTTON_UP);
+        Serial.print("Error: onButtonUp called in PHYSICAL mode for virtual button ");
+        Serial.print(buttonId);
+        Serial.println(". This function should only be called in VIRTUAL mode.");
+        return; // or handle the error appropriately
     }
+    onVirtualButtonUp(buttonId);
 }
 
 void onVirtualButtonDown(int buttonId) {
@@ -831,13 +804,28 @@ void testTask(void *pvParameters) {
     vTaskDelete(NULL); // Delete the task when done
 }
 
+
 void testPublicInterface() {
     Serial.println("Starting Public Interface Tests...");
 
-    // TEST 1: Setting the lock owner to VIRTUAL
+    // TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL
     Serial.println("\n--------------------");
-    Serial.println("TEST 1: Setting the lock owner to VIRTUAL");
+    Serial.println("TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL");
     Serial.println("--------------------");
+
+    Serial.println("Setting lock owner to VIRTUAL");
+    Serial.println(stateToString());
+    setVirtualLockOwner();
+    Serial.println(stateToString());
+    Serial.println("----END STEP----");
+
+    Serial.println("Setting lock owner to PHYSICAL");
+    Serial.println(stateToString());
+    setPhysicalLockOwner();
+    Serial.println(stateToString());
+    Serial.println("----END STEP----");
+
+    Serial.println("Setting lock owner to VIRTUAL");
     Serial.println(stateToString());
     setVirtualLockOwner();
     Serial.println(stateToString());
@@ -965,7 +953,7 @@ void testPublicInterface() {
     setPhysicalLockOwner();
     Serial.println(stateToString());
     Serial.println("----END----");
-    delay(1000); // Wait for 1 seconds
+    delay(1000); // Wait for 1 second
 
     // TEST 7: Getting the lock owner
     Serial.println("\n--------------------");
@@ -977,8 +965,28 @@ void testPublicInterface() {
     Serial.println(lockOwner == VIRTUAL ? "VIRTUAL" : "PHYSICAL");
     Serial.println(stateToString());
     Serial.println("----END----");
-    delay(1000); // Wait for 1 seconds
+    delay(1000); // Wait for 1 second
+
+    // TEST 8: Test API button calls while in PHYSICAL mode
+    Serial.println("\n--------------------");
+    Serial.println("TEST 8: Test API button calls while in PHYSICAL mode");
+    Serial.println("--------------------");
+    for (int i = 0; i <= 6; i++) {
+        Serial.print("Pushing button ");
+        Serial.print(i);
+        Serial.println(" (DOWN)");
+        onButtonDown(i);
+        delay(60); // Wait for 60 milliseconds
+        Serial.println(stateToString());
+
+        Serial.print("Releasing button ");
+        Serial.print(i);
+        Serial.println(" (UP)");
+        onButtonUp(i);
+        delay(60); // Wait for 60 milliseconds
+        Serial.println(stateToString());
+    }
+    Serial.println("----END----");
 
     Serial.println("Public Interface Tests Completed.");
 }
-
