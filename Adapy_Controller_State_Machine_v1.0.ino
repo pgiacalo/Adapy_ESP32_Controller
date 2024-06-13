@@ -113,9 +113,9 @@ HardwareSerial uartSerialPort(1);
 // PUBLIC FUNCTIONS - YOU CAN CALL THESE 3 FUNCTIONS
 void onButtonDown(int buttonId);  //public interface
 void onButtonUp(int buttonId);    //public interface
-void setPhysicalLockOwner();
 void setVirtualLockOwner();
 ControllerLockOwner getLockOwner();
+void setPhysicalLockOwner();
 
 // Private Function declarations 
 // DO NOT CALL ANY OF THESE FUNCTION
@@ -559,20 +559,31 @@ bool updateControllerState(ControllerStateEnum newState) {
     return false;
 }
 
-void setLEDState(){
-  if (currentControllerState.controllerState == INACTIVE){
-    ledBehavior = LED_BEHAVIOR_OFF;
-  } else if (currentControllerState.controllerState == ARMED) {
-    ledColor = LED_COLOR_GREEN;
-    ledBehavior = LED_BEHAVIOR_ON;
-  } else if (currentControllerState.controllerState == TRANSMITTING){
-    ledColor = LED_COLOR_GREEN;
-    ledBehavior = LED_BEHAVIOR_BLINK;
-  } else if (currentControllerState.controllerState == DISARMED){
-    ledBehavior = LED_BEHAVIOR_OFF;
-  } else if (currentControllerState.controllerState == BUTTON_0_STUCK_DOWN) {
-    ledBehavior = LED_BEHAVIOR_CYCLE;
-  }
+// Puts the LEDs in the proper state (blinking, on, off, etc) associated with the current controller state
+// LEDControl.ino scans for changes to these values and controls the LED behaviors based on these settings.
+void setLEDState() {
+    switch (currentControllerState.controllerState) {
+        case INACTIVE:
+            ledBehavior = LED_BEHAVIOR_OFF;
+            break;
+        case ARMED:
+            ledColor = LED_COLOR_GREEN;
+            ledBehavior = LED_BEHAVIOR_ON;
+            break;
+        case TRANSMITTING:
+            ledColor = LED_COLOR_GREEN;
+            ledBehavior = LED_BEHAVIOR_BLINK;
+            break;
+        case DISARMED:
+            ledBehavior = LED_BEHAVIOR_OFF;
+            break;
+        case BUTTON_0_STUCK_DOWN:
+            ledBehavior = LED_BEHAVIOR_CYCLE;
+            break;
+        default:
+            // Handle unexpected states if necessary
+            break;
+    }
 }
 
 void initializeControllerState() {
