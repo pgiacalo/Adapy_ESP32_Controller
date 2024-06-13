@@ -73,10 +73,6 @@ void controlLEDs(void *pvParameters) {
                 vTaskDelay(blinkInterval / portTICK_PERIOD_MS); // Wait for the next flash
                 break;
             case LED_BEHAVIOR_CYCLE:
-                digitalWrite(redLEDPin, HIGH);
-                digitalWrite(greenLEDPin, LOW);
-                digitalWrite(blueLEDPin, LOW);
-                vTaskDelay(cycleInterval / portTICK_PERIOD_MS);
                 digitalWrite(redLEDPin, LOW);
                 digitalWrite(greenLEDPin, HIGH);
                 digitalWrite(blueLEDPin, LOW);
@@ -84,6 +80,10 @@ void controlLEDs(void *pvParameters) {
                 digitalWrite(redLEDPin, LOW);
                 digitalWrite(greenLEDPin, LOW);
                 digitalWrite(blueLEDPin, HIGH);
+                vTaskDelay(cycleInterval / portTICK_PERIOD_MS);
+                digitalWrite(redLEDPin, HIGH);
+                digitalWrite(greenLEDPin, LOW);
+                digitalWrite(blueLEDPin, LOW);
                 vTaskDelay(cycleInterval / portTICK_PERIOD_MS);
                 break;
         }

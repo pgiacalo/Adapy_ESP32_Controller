@@ -27,7 +27,7 @@ enum ControllerStateEnum {
     INACTIVE,
     ARMED,
     DISARMED,
-    TRANSMITTING,
+    TRANSMITTING,   //transmitting commands to drive the seat motors
     BUTTON_0_STUCK_DOWN
 };
 
@@ -98,7 +98,7 @@ ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
 unsigned int recentCommandTime = 0;  // the most recent time when a command was sent via UART 
-const unsigned int timeBetweenCommands = 300; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
+const unsigned int timeBetweenCommands = 330; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
@@ -179,7 +179,6 @@ void setup() {
     initializeControllerState();
     debug(stateToString(), DEBUG_PRIORITY_LOW);
 
-    delay(5000);
     ledBehavior = LED_BEHAVIOR_OFF;
 
     debug(stateToString(), DEBUG_PRIORITY_HIGH);
@@ -578,17 +577,19 @@ void setLEDState(){
 
 void initializeControllerState() {
     debug("initializeControllerState() called", DEBUG_PRIORITY_LOW);
+    unsigned long now = millis();
 
     if (currentControllerState.lockOwner == PHYSICAL) {
         debug("Lock owner is PHYSICAL", DEBUG_PRIORITY_LOW);
 
         // If Button 0 is being held down at startup, all the other controller buttons are inactivated
         if (currentButtonStates[0].buttonState == BUTTON_DOWN) {
+            currentControllerState = {INACTIVE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
             updateControllerState(INACTIVE);
             debug("Button 0 is DOWN at startup, setting state to INACTIVE", DEBUG_PRIORITY_HIGH);
         } else {
-            unsigned long now = millis();
             currentControllerState = {DEFAULT_CONTROLLER_STATE, now, DEFAULT_PRIOR_CONTROLLER_STATE, now, DEFAULT_LOCK_OWNER, now};
+            updateControllerState(DEFAULT_CONTROLLER_STATE);
             debug("Button 0 is not DOWN, setting state to DEFAULT_CONTROLLER_STATE", DEBUG_PRIORITY_HIGH);
         }
     } else {
