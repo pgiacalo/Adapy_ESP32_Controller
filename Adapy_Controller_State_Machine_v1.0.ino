@@ -8,6 +8,8 @@ constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
 // The letter commands sent to the Adapt Systems black box by each of the buttons (for on-design operations)
 const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 
+const bool TEST_PUBLIC_INTERFACE = true;
+
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
 constexpr int uartRxPin = 16;
@@ -110,15 +112,18 @@ const unsigned int ownerLockTimeout = 9000; // milliseconds
 HardwareSerial uartSerialPort(1);
 
 // Function declarations
-// PUBLIC FUNCTIONS - YOU CAN CALL THESE 3 FUNCTIONS
-void onButtonDown(int buttonId);  //public interface
-void onButtonUp(int buttonId);    //public interface
-void setVirtualLockOwner();
-ControllerLockOwner getLockOwner();
-void setPhysicalLockOwner();
+// PUBLIC FUNCTIONS - YOU CAN SAFELY CALL THESE FUNCTIONS
+void setVirtualLockOwner();         //public interface
+void onButtonDown(int buttonId);    //public interface
+void onButtonUp(int buttonId);      //public interface
+ControllerLockOwner getLockOwner(); //public interface
 
 // Private Function declarations 
-// DO NOT CALL ANY OF THESE FUNCTION
+// DO _NOT_ CALL ANY OF THESE FUNCTIONS
+void testPublicInterface();
+void testTask(void *pvParameters);
+
+void setPhysicalLockOwner();
 void onVirtualButtonDown(int buttonId);
 void onVirtualButtonUp(int buttonId);
 void onPhysicalButtonDown(int buttonId);
@@ -183,6 +188,11 @@ void setup() {
 
     debug(stateToString(), DEBUG_PRIORITY_HIGH);
     debug("setup() complete", DEBUG_PRIORITY_HIGH);
+
+    if (TEST_PUBLIC_INTERFACE){
+      // Create the test task
+      xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);    
+    }
 }
 
 void loop() {
@@ -798,3 +808,115 @@ void initializeTimes(){
   recentButtonChangeTime = millis();
   recentCommandTime = millis();  
 }
+
+void testTask(void *pvParameters) {
+    testPublicInterface(); // Run the test code
+    vTaskDelete(NULL); // Delete the task when done
+}
+
+void testPublicInterface() {
+    Serial.println("Starting Public Interface Tests...");
+
+    // TEST 1: Setting the lock owner to VIRTUAL
+    Serial.println("\nTEST 1: Setting the lock owner to VIRTUAL");
+    Serial.println(stateToString());
+    setVirtualLockOwner();
+    Serial.println(stateToString());
+    Serial.println("----END----");
+
+    // TEST 2: Getting the lock owner
+    Serial.println("\nTEST 2: Getting the lock owner");
+    Serial.println(stateToString());
+    ControllerLockOwner lockOwner = getLockOwner();
+    Serial.print("Lock Owner: ");
+    Serial.println(lockOwner == VIRTUAL ? "VIRTUAL" : "PHYSICAL");
+    Serial.println(stateToString());
+    Serial.println("----END----");
+
+    // TEST 3: Setting to ARMED mode
+    Serial.println("\nTEST 3: Setting to ARMED mode");
+    Serial.println("Pushing button 0 (DOWN)");
+    Serial.println(stateToString());
+    onButtonDown(0);
+    Serial.println(stateToString());
+
+    Serial.println("Releasing button 0 (UP)");
+    onButtonUp(0);
+    Serial.println(stateToString());
+
+    delay(10000); // Wait for 10 seconds
+    Serial.println(stateToString());
+    Serial.println("----END----");
+
+    // TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons
+    Serial.println("\nTEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons");
+    Serial.println("Pushing button 0 (DOWN)");
+    Serial.println(stateToString());
+    onButtonDown(0);
+    delay(20); // Wait for 20 milliseconds
+    Serial.println(stateToString());
+
+    Serial.println("Releasing button 0 (UP)");
+    onButtonUp(0);
+    delay(1000); // Wait for 1 second
+    Serial.println(stateToString());
+
+    for (int i = 1; i <= 6; i++) {
+        Serial.print("Pushing button ");
+        Serial.print(i);
+        Serial.println(" (DOWN)");
+        onButtonDown(i);
+        Serial.println(stateToString());
+
+        delay(2000); // Wait for 2 seconds
+
+        Serial.print("Releasing button ");
+        Serial.print(i);
+        Serial.println(" (UP)");
+        onButtonUp(i);
+        Serial.println(stateToString());
+
+        delay(2000); // Wait for 2 seconds
+    }
+
+    delay(10000); // Wait for 10 seconds
+    Serial.println(stateToString());
+    Serial.println("----END----");
+
+    // TEST 5: Holding down 2 buttons simultaneously
+    Serial.println("\nTEST 5: Holding down 2 buttons simultaneously");
+    Serial.println("Pushing button 0 (DOWN)");
+    Serial.println(stateToString());
+    onButtonDown(0);
+    delay(20); // Wait for 20 milliseconds
+    Serial.println(stateToString());
+
+    Serial.println("Releasing button 0 (UP)");
+    onButtonUp(0);
+    delay(1000); // Wait for 1 second
+    Serial.println(stateToString());
+
+    Serial.println("Pushing button 1 (DOWN)");
+    onButtonDown(1);
+    delay(20); // Wait for 20 milliseconds
+    Serial.println(stateToString());
+
+    Serial.println("Pushing button 2 (DOWN)");
+    onButtonDown(2);
+    delay(2000); // Wait for 2 seconds
+    Serial.println(stateToString());
+
+    Serial.println("Releasing button 2 (UP)");
+    onButtonUp(2);
+    delay(2000); // Wait for 2 seconds
+    Serial.println(stateToString());
+
+    Serial.println("Releasing button 1 (UP)");
+    onButtonUp(1);
+    delay(10000); // Wait for 10 seconds
+    Serial.println(stateToString());
+    Serial.println("----END----");
+
+    Serial.println("Public Interface Tests Completed.");
+}
+
