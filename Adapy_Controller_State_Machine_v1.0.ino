@@ -2,13 +2,26 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+// Comment out the following line, if not testing
+// #define TESTING_PUBLIC_INTERFACE
+
+#ifdef TESTING_PUBLIC_INTERFACE
+  // Custom assert macro for testing
+  #define custom_assert(cond, msg) \
+      do { \
+          if (!(cond)) { \
+              Serial.print("Assertion failed: "); \
+              Serial.println(msg); \
+              while (1); \
+          } \
+      } while (0)
+#endif
+
 // GPIO pins for all 7 buttons (Controller buttons #0 thru #6)
 constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
 
 // The letter commands sent to the Adapt Systems black box by each of the buttons (for on-design operations)
 const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
-
-const bool TESTING_PUBLIC_INTERFACE = true;
 
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
@@ -144,8 +157,10 @@ bool buttonChanged(const ButtonState& button);
 bool buttonHeldDown(const ButtonState& button);
 bool buttonChangedTo(const ButtonState& button, ButtonStateEnum newState);
 bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis);
-void testPublicInterface();
-void testTask(void *pvParameters);
+#ifdef TESTING_PUBLIC_INTERFACE
+  void testTask(void *pvParameters) ;
+  void testPublicInterface();
+#endif
 
 void setup() {
     Serial.begin(19200); // Initialize console serial
@@ -186,10 +201,10 @@ void setup() {
     debug(stateToString(), DEBUG_PRIORITY_HIGH);
     debug("setup() complete", DEBUG_PRIORITY_HIGH);
 
-    if (TESTING_PUBLIC_INTERFACE){
+    #ifdef TESTING_PUBLIC_INTERFACE
       // Create the test task
       xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);    
-    }
+    #endif
 }
 
 void loop() {
@@ -799,12 +814,53 @@ void initializeTimes(){
   recentCommandTime = millis();  
 }
 
+// ControllerStateEnum getControllerState() {
+//     return currentControllerState.controllerState;
+// }
+
+// ButtonState getButtonState(int buttonId) {
+//     return currentButtonStates[buttonId];
+// }
+
+// unsigned long getRecentButtonChangeTime() {
+//     return recentButtonChangeTime;
+// }
+
+// unsigned long getRecentCommandTime() {
+//     return recentCommandTime;
+// }
+
+// unsigned int getTimeBetweenCommands() {
+//     return timeBetweenCommands;
+// }
+
+// unsigned int getArmedTimeout() {
+//     return armedTimeout;
+// }
+
+// unsigned int getButton0HoldThreshold() {
+//     return button0HoldThreshold;
+// }
+
+// unsigned int getDebounceDelay() {
+//     return debounceDelay;
+// }
+
+// unsigned int getOwnerLockTimeout() {
+//     return ownerLockTimeout;
+// }
+
+// ---------------------------------------
+// conditional compilation of testing code
+// ---------------------------------------
+#ifdef TESTING_PUBLIC_INTERFACE
+// Task to run the public interface tests
 void testTask(void *pvParameters) {
-    testPublicInterface(); // Run the test code
+    testPublicInterface();
     vTaskDelete(NULL); // Delete the task when done
 }
 
-
+// Function to run the public interface tests
 void testPublicInterface() {
     Serial.println("Starting Public Interface Tests...");
 
@@ -816,18 +872,21 @@ void testPublicInterface() {
     Serial.println("Setting lock owner to VIRTUAL");
     Serial.println(stateToString());
     setVirtualLockOwner();
+    custom_assert(getLockOwner() == VIRTUAL, "Lock owner should be VIRTUAL after setVirtualLockOwner()");
     Serial.println(stateToString());
     Serial.println("----END STEP----");
 
     Serial.println("Setting lock owner to PHYSICAL");
     Serial.println(stateToString());
     setPhysicalLockOwner();
+    custom_assert(getLockOwner() == PHYSICAL, "Lock owner should be PHYSICAL after setPhysicalLockOwner()");
     Serial.println(stateToString());
     Serial.println("----END STEP----");
 
     Serial.println("Setting lock owner to VIRTUAL");
     Serial.println(stateToString());
     setVirtualLockOwner();
+    custom_assert(getLockOwner() == VIRTUAL, "Lock owner should be VIRTUAL after setVirtualLockOwner()");
     Serial.println(stateToString());
     Serial.println("----END----");
 
@@ -837,6 +896,7 @@ void testPublicInterface() {
     Serial.println("--------------------");
     Serial.println(stateToString());
     ControllerLockOwner lockOwner = getLockOwner();
+    custom_assert(lockOwner == VIRTUAL, "Lock owner should be VIRTUAL in TEST 2");
     Serial.print("Lock Owner: ");
     Serial.println(lockOwner == VIRTUAL ? "VIRTUAL" : "PHYSICAL");
     Serial.println(stateToString());
@@ -846,8 +906,12 @@ void testPublicInterface() {
     Serial.println("\n--------------------");
     Serial.println("TEST 3: Setting to ARMED mode");
     Serial.println("--------------------");
-    Serial.println("Pushing button 0 (DOWN)");
+
+    // Verify initial state is DISARMED
     Serial.println(stateToString());
+    custom_assert(currentControllerState.controllerState == DISARMED, "Initial state should be DISARMED in TEST 3");
+
+    Serial.println("Pushing button 0 (DOWN)");
     onButtonDown(0);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
@@ -856,9 +920,11 @@ void testPublicInterface() {
     onButtonUp(0);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(currentControllerState.controllerState == ARMED, "State should be ARMED after button 0 is released in TEST 3");
 
     delay(10000); // Wait for 10 seconds
     Serial.println(stateToString());
+    custom_assert(currentControllerState.controllerState == DISARMED, "State should be DISARMED after timeout in TEST 3");
     Serial.println("----END----");
 
     // TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons
@@ -870,11 +936,13 @@ void testPublicInterface() {
     onButtonDown(0);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("0:DOWN") > -1, "Button 0 should be DOWN in TEST 4");
 
     Serial.println("Releasing button 0 (UP)");
     onButtonUp(0);
     delay(1000); // Wait for 1 second
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("0:UP") > -1, "Button 0 should be UP in TEST 4");
 
     for (int i = 1; i <= 6; i++) {
         Serial.print("Pushing button ");
@@ -883,6 +951,7 @@ void testPublicInterface() {
         onButtonDown(i);
         delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
+        custom_assert(stateToString().indexOf(String(i) + ":DOWN") > -1, "Button " + String(i) + " should be DOWN in TEST 4");
 
         delay(2000); // Wait for 2 seconds
 
@@ -892,6 +961,7 @@ void testPublicInterface() {
         onButtonUp(i);
         delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
+        custom_assert(stateToString().indexOf(String(i) + ":UP") > -1, "Button " + String(i) + " should be UP in TEST 4");
 
         delay(2000); // Wait for 2 seconds
     }
@@ -909,11 +979,13 @@ void testPublicInterface() {
     onButtonDown(0);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("0:DOWN") > -1, "Button 0 should be DOWN in TEST 5");
 
     Serial.println("Releasing button 0 (UP)");
     onButtonUp(0);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("0:UP") > -1, "Button 0 should be UP in TEST 5");
 
     delay(1000); // Wait for 1 second
 
@@ -921,11 +993,13 @@ void testPublicInterface() {
     onButtonDown(1);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("1:DOWN") > -1, "Button 1 should be DOWN in TEST 5");
 
     Serial.println("Pushing button 2 (DOWN)");
     onButtonDown(2);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("2:DOWN") > -1, "Button 2 should be DOWN in TEST 5");
 
     delay(2000); // Wait for 2 seconds
 
@@ -933,6 +1007,7 @@ void testPublicInterface() {
     onButtonUp(2);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("2:UP") > -1, "Button 2 should be UP in TEST 5");
 
     delay(2000); // Wait for 2 seconds
 
@@ -940,6 +1015,7 @@ void testPublicInterface() {
     onButtonUp(1);
     delay(60); // Wait for 60 milliseconds
     Serial.println(stateToString());
+    custom_assert(stateToString().indexOf("1:UP") > -1, "Button 1 should be UP in TEST 5");
 
     delay(10000); // Wait for 10 seconds
     Serial.println(stateToString());
@@ -951,6 +1027,7 @@ void testPublicInterface() {
     Serial.println("--------------------");
     Serial.println(stateToString());
     setPhysicalLockOwner();
+    custom_assert(getLockOwner() == PHYSICAL, "Lock owner should be PHYSICAL in TEST 6");
     Serial.println(stateToString());
     Serial.println("----END----");
     delay(1000); // Wait for 1 second
@@ -961,6 +1038,7 @@ void testPublicInterface() {
     Serial.println("--------------------");
     Serial.println(stateToString());
     lockOwner = getLockOwner();
+    custom_assert(lockOwner == PHYSICAL, "Lock owner should be PHYSICAL in TEST 7");
     Serial.print("Lock Owner: ");
     Serial.println(lockOwner == VIRTUAL ? "VIRTUAL" : "PHYSICAL");
     Serial.println(stateToString());
@@ -978,6 +1056,7 @@ void testPublicInterface() {
         onButtonDown(i);
         delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
+        custom_assert(stateToString().indexOf(String(i) + ":DOWN") == -1, "Button " + String(i) + " should NOT be DOWN in PHYSICAL mode");
 
         Serial.print("Releasing button ");
         Serial.print(i);
@@ -985,8 +1064,13 @@ void testPublicInterface() {
         onButtonUp(i);
         delay(60); // Wait for 60 milliseconds
         Serial.println(stateToString());
+        custom_assert(stateToString().indexOf(String(i) + ":UP") > -1, "Button " + String(i) + " should be UP in PHYSICAL mode");
     }
+
+    delay(10000); // Wait for 10 seconds
+    Serial.println(stateToString());
     Serial.println("----END----");
 
     Serial.println("Public Interface Tests Completed.");
 }
+#endif
