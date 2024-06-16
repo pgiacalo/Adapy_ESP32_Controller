@@ -90,7 +90,8 @@ enum LedBehavior {
     LED_BEHAVIOR_OFF,
     LED_BEHAVIOR_ON,
     LED_BEHAVIOR_BLINK,
-    LED_BEHAVIOR_FLASH,
+    LED_BEHAVIOR_FAST_BLINK,
+    LED_BEHAVIOR_SLOW_BLINK,
     LED_BEHAVIOR_CYCLE
 };
 
@@ -113,7 +114,7 @@ ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0;  // the most recent time when any button was pressed or released
 unsigned int recentCommandTime = 0;  // the most recent time when a command was sent via UART 
-const unsigned int timeBetweenCommands = 330; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
+const unsigned int timeBetweenCommands = 337; // milliseconds, the time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
