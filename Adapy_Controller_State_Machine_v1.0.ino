@@ -3,7 +3,7 @@
 #include <freertos/task.h>
 
 // Comment out the following line, if not testing
-// #define TESTING_PUBLIC_INTERFACE
+#define TESTING_PUBLIC_INTERFACE
 
 #ifdef TESTING_PUBLIC_INTERFACE
   // Custom assert macro for testing
@@ -599,17 +599,28 @@ void debug(const String& msg, int messagePriority) {
  */
 bool updateControllerState(ControllerStateEnum newState) {
     unsigned long now = millis();
+
+    // Check if the state is actually changing
     if (currentControllerState.controllerState != newState) {
         debug("updateControllerState(): Attempting to update state from " + String(currentControllerState.controllerState) + " to " + String(newState), DEBUG_PRIORITY_LOW);
+        
+        // Update the prior state information
         currentControllerState.priorControllerState = currentControllerState.controllerState;
         currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
+        
+        // Update the current state and time
         currentControllerState.controllerState = newState;
+        currentControllerState.stateTransitionTime = now;
+        
+        // Set the LED state based on the new controller state
         setLEDState();
+        
         debug("updateControllerState(): Controller state updated to: " + stateToString(), DEBUG_PRIORITY_LOW);
         return true;
     }
     return false;
 }
+
 
 // Puts the LEDs in the proper state (blinking, on, off, etc) associated with the current controller state
 // LEDControl.ino scans for changes to these values and controls the LED behaviors based on these settings.
@@ -920,7 +931,7 @@ void testPublicInterface() {
 
     // TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL
     Serial.println("\n--------------------");
-    Serial.println("TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL");
+    Serial.println("TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -931,14 +942,14 @@ void testPublicInterface() {
     Serial.println(stateToString());
     Serial.println("----END STEP----");
 
-    Serial.println("Setting lock owner to PHYSICAL");
+    Serial.println("Setting lock owner to PHYSICAL (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println(stateToString());
     setPhysicalLockOwner();
     custom_assert(getLockOwner() == PHYSICAL, "Lock owner should be PHYSICAL after setPhysicalLockOwner()");
     Serial.println(stateToString());
     Serial.println("----END STEP----");
 
-    Serial.println("Setting lock owner to VIRTUAL");
+    Serial.println("Setting lock owner to VIRTUAL (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println(stateToString());
     setVirtualLockOwner();
     custom_assert(getLockOwner() == VIRTUAL, "Lock owner should be VIRTUAL after setVirtualLockOwner()");
@@ -947,7 +958,7 @@ void testPublicInterface() {
 
     // TEST 2: Getting the lock owner
     Serial.println("\n--------------------");
-    Serial.println("TEST 2: Getting the lock owner");
+    Serial.println("TEST 2: Getting the lock owner (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -961,7 +972,7 @@ void testPublicInterface() {
 
     // TEST 3: Setting to ARMED mode
     Serial.println("\n--------------------");
-    Serial.println("TEST 3: Setting to ARMED mode");
+    Serial.println("TEST 3: Setting to ARMED mode (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -985,9 +996,9 @@ void testPublicInterface() {
     custom_assert(currentControllerState.controllerState == DISARMED, "State should be DISARMED after timeout in TEST 3");
     Serial.println("----END----");
 
-    // TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons
+    // TEST 4: Setting to ARMED mode and individually pushing each action button
     Serial.println("\n--------------------");
-    Serial.println("TEST 4: Setting to ARMED mode and individually pushing each action button");
+    Serial.println("TEST 4: Setting to ARMED mode and individually pushing each action button (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -1033,7 +1044,7 @@ void testPublicInterface() {
 
     // TEST 5: Arming and then holding down 2 buttons simultaneously
     Serial.println("\n--------------------");
-    Serial.println("TEST 5: Arming and then holding down 2 buttons simultaneously");
+    Serial.println("TEST 5: Arming and then holding down 2 buttons simultaneously (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -1086,7 +1097,7 @@ void testPublicInterface() {
 
     // TEST 6: Setting the lock owner to PHYSICAL
     Serial.println("\n--------------------");
-    Serial.println("TEST 6: Setting the lock owner to PHYSICAL");
+    Serial.println("TEST 6: Setting the lock owner to PHYSICAL (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -1099,7 +1110,7 @@ void testPublicInterface() {
 
     // TEST 7: Getting the lock owner
     Serial.println("\n--------------------");
-    Serial.println("TEST 7: Getting the lock owner");
+    Serial.println("TEST 7: Getting the lock owner (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -1114,7 +1125,7 @@ void testPublicInterface() {
 
     // TEST 8: Test API button calls while in PHYSICAL mode
     Serial.println("\n--------------------");
-    Serial.println("TEST 8: Test API onButton...() calls while in PHYSICAL mode -- these should all FAIL.");
+    Serial.println("TEST 8: Test API onButton...() calls while in PHYSICAL mode -- these should all FAIL (lock=" + String(getLockOwner() == VIRTUAL ? "VIRTUAL" : "PHYSICAL") + ")");
     Serial.println("--------------------");
     delay(3000); // 3-second pause before starting the test
 
@@ -1142,5 +1153,6 @@ void testPublicInterface() {
 
     Serial.println("Public Interface Tests Completed.");
 }
+
 
 #endif
