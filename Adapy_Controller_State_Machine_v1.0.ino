@@ -26,6 +26,8 @@ const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
 constexpr int uartRxPin = 16;
+constexpr int uartEnabledDelay = 150; //milliseconds - the time between enabling the uart and the first signal transmissions
+bool isUartEnabled = false;
 
 // Debug levels
 constexpr int DEBUG_PRIORITY_HIGH = 3;
@@ -90,8 +92,7 @@ enum LedBehavior {
     LED_BEHAVIOR_OFF,
     LED_BEHAVIOR_ON,
     LED_BEHAVIOR_BLINK,
-    LED_BEHAVIOR_FAST_BLINK,
-    LED_BEHAVIOR_SLOW_BLINK,
+    LED_BEHAVIOR_FLASH,
     LED_BEHAVIOR_CYCLE
 };
 
@@ -123,7 +124,7 @@ const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
 const unsigned int debounceDelay = 50; // 50 milliseconds debounce delay
 const unsigned int ownerLockTimeout = 9000; // milliseconds
 
-HardwareSerial uartSerialPort(1);
+HardwareSerial uartSerialPort(1); //uses UART1
 
 // Function declarations
 // PUBLIC FUNCTIONS - YOU CAN SAFELY CALL THESE FUNCTIONS
@@ -144,6 +145,9 @@ ButtonState scanButtonStates();
 void initializeButtonPins();
 void initializeButtonStates();
 void initializeControllerState();
+void initUART();
+void enableUART();
+void disableUART();
 bool updateControllerState(ControllerStateEnum newState);
 void debug(const String& msg, int level);
 void checkLockOwnerTimeout();
@@ -164,7 +168,7 @@ bool buttonHeldDownFor(const ButtonState& button, unsigned long timeoutInMillis)
 #endif
 
 void setup() {
-    Serial.begin(19200); // Initialize console serial
+    Serial.begin(serialBaudRate); // Initialize console serial
     Serial.flush();  // Flush the serial buffer to clear bootloader messages
 
     debug("", DEBUG_PRIORITY_HIGH); // line break
@@ -178,7 +182,7 @@ void setup() {
     ledBehavior = LED_BEHAVIOR_CYCLE; // Cycle through all the LED colors
 
     // Initialize UART port (for communication with the Adapt Systems black box)
-    initUART(uartSerialPort, 19200, 17, 16); 
+    initUART(uartSerialPort, uartBaudRate, uartTxPin, uartRxPin); 
     debug("setup() UART initialized", DEBUG_PRIORITY_LOW);
 
     initializeTimes();
@@ -366,13 +370,45 @@ String stateToString() {
 // Initialize the UART port
 void initUART(HardwareSerial &serial, long baudRate, int txPin, int rxPin) {
     serial.begin(baudRate, SERIAL_8N1, rxPin, txPin);
+    // serial.begin(baudRate, SERIAL_8N1, rxPin, txPin, true);
     debug("UART initialized", DEBUG_PRIORITY_LOW);
+    pinMode(uartTxPin, OUTPUT);
+    digitalWrite(uartTxPin, LOW);
+    isUartEnabled = false;
+}
+
+void enableUART() {
+    if (!isUartEnabled){
+      debug("enableUART() UART PIN is LOW", DEBUG_PRIORITY_HIGH);
+      // Set the UART TX pin to HIGH to enable UART communication
+      digitalWrite(uartTxPin, HIGH);
+
+      // Initialize UART communication
+      uartSerialPort.begin(uartBaudRate, SERIAL_8N1, uartRxPin, uartTxPin);
+      isUartEnabled = true;
+      // Wait for 100 ms
+      delay(uartEnabledDelay);
+    }
+}
+
+void disableUART() {
+  if (isUartEnabled){
+    // Flush UART and disable it
+    uartSerialPort.flush(); // Ensure all data is sent before disabling UART
+    uartSerialPort.end();   // End UART communication
+
+    // Set the UART TX pin to LOW
+    pinMode(uartTxPin, OUTPUT); // Reinitialize as output
+    digitalWrite(uartTxPin, LOW);
+    isUartEnabled = false;
+  }
 }
 
 // Send a character over UART (this sends the command to the Adapt Solutions black box)
 void sendUARTMessage(char message) {
     if (uartSerialPort.availableForWrite()) {
         String formattedMessage = formatMessage(message);
+        enableUART();
         uartSerialPort.print(formattedMessage); // Use print instead of println to avoid adding a newline character
         
         String debugMessage = formattedMessage;
@@ -641,7 +677,9 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     // This is an error condition
     if (currentControllerState.controllerState == INACTIVE) {
         if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_UP)) {
+            //releasing Button 0 puts the controller into the disarmed state
             updateControllerState(DISARMED);
+            disableUART();
             debug("1) Controller state updated from INACTIVE to DISARMED: " + stateToString(), DEBUG_PRIORITY_LOW);
             return;
         } else {
@@ -657,11 +695,15 @@ void handleControllerStateTransitions(ButtonState recentButton) {
         if (currentControllerState.controllerState == BUTTON_0_STUCK_DOWN) {
             if (buttonChangedTo(recentButton, BUTTON_UP)) {
                 updateControllerState(ARMED);
+                enableUART();
+
                 debug("3) Controller state updated from BUTTON_0_STUCK_DOWN to ARMED: " + stateToString(), DEBUG_PRIORITY_HIGH);
                 return;
             }
         } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
             updateControllerState(BUTTON_0_STUCK_DOWN);
+            disableUART();
+
             debug("4) Controller state updated to BUTTON_0_STUCK_DOWN: " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
@@ -670,6 +712,8 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     // Transition to TRANSMITTING when ARMED and button 1-6 is DOWN
     if (currentControllerState.controllerState == ARMED && recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_DOWN) {
         updateControllerState(TRANSMITTING);
+        enableUART();
+
         debug("5) Controller state updated to TRANSMITTING: " + stateToString(), DEBUG_PRIORITY_HIGH);
         return;
     }
@@ -677,6 +721,8 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     // Transition back to ARMED when TRANSMITTING and button 1-6 is UP
     if (currentControllerState.controllerState == TRANSMITTING && recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_UP) {
         updateControllerState(ARMED);
+        enableUART();
+
         debug("6) Controller state updated from TRANSMITTING to ARMED: " + stateToString(), DEBUG_PRIORITY_HIGH);
         return;
     }
@@ -685,6 +731,8 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     if (currentControllerState.controllerState == DISARMED) {
         if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_DOWN)) {
             updateControllerState(ARMED);
+            enableUART();
+
             debug("7) Controller state updated from DISARMED to ARMED: " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
@@ -694,6 +742,10 @@ void handleControllerStateTransitions(ButtonState recentButton) {
     if (currentControllerState.controllerState == ARMED) {
         if ((millis() - recentButtonChangeTime) > armedTimeout) {
             updateControllerState(DISARMED);
+            disableUART();
+
+            debug("++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
+
             debug("8) Controller state updated from ARMED to DISARMED (>timeout): " + stateToString(), DEBUG_PRIORITY_HIGH);
             return;
         }
@@ -864,11 +916,13 @@ void testTask(void *pvParameters) {
 // Function to run the public interface tests
 void testPublicInterface() {
     Serial.println("Starting Public Interface Tests...");
+    delay(3000); // 3-second pause before starting the tests
 
     // TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL
     Serial.println("\n--------------------");
     Serial.println("TEST 1: Setting the lock owner to VIRTUAL or PHYSICAL");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
 
     Serial.println("Setting lock owner to VIRTUAL");
     Serial.println(stateToString());
@@ -895,6 +949,8 @@ void testPublicInterface() {
     Serial.println("\n--------------------");
     Serial.println("TEST 2: Getting the lock owner");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
+
     Serial.println(stateToString());
     ControllerLockOwner lockOwner = getLockOwner();
     custom_assert(lockOwner == VIRTUAL, "Lock owner should be VIRTUAL in TEST 2");
@@ -907,6 +963,7 @@ void testPublicInterface() {
     Serial.println("\n--------------------");
     Serial.println("TEST 3: Setting to ARMED mode");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
 
     // Verify initial state is DISARMED
     Serial.println(stateToString());
@@ -930,9 +987,11 @@ void testPublicInterface() {
 
     // TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons
     Serial.println("\n--------------------");
-    Serial.println("TEST 4: Setting to ARMED mode and pushing each one of the 6 action buttons");
+    Serial.println("TEST 4: Setting to ARMED mode and individually pushing each action button");
     Serial.println("--------------------");
-    Serial.println("Pushing button 0 (DOWN)");
+    delay(3000); // 3-second pause before starting the test
+
+    Serial.println("Arming by pushing button 0 (DOWN)");
     Serial.println(stateToString());
     onButtonDown(0);
     delay(60); // Wait for 60 milliseconds
@@ -941,11 +1000,12 @@ void testPublicInterface() {
 
     Serial.println("Releasing button 0 (UP)");
     onButtonUp(0);
-    delay(1000); // Wait for 1 second
+    delay(2000); // Wait for 2 seconds
     Serial.println(stateToString());
     custom_assert(stateToString().indexOf("0:UP") > -1, "Button 0 should be UP in TEST 4");
 
     for (int i = 1; i <= 6; i++) {
+        delay(2000); // Wait for 2 seconds
         Serial.print("Pushing button ");
         Serial.print(i);
         Serial.println(" (DOWN)");
@@ -971,10 +1031,12 @@ void testPublicInterface() {
     Serial.println(stateToString());
     Serial.println("----END----");
 
-    // TEST 5: Holding down 2 buttons simultaneously
+    // TEST 5: Arming and then holding down 2 buttons simultaneously
     Serial.println("\n--------------------");
-    Serial.println("TEST 5: Holding down 2 buttons simultaneously");
+    Serial.println("TEST 5: Arming and then holding down 2 buttons simultaneously");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
+
     Serial.println("Pushing button 0 (DOWN)");
     Serial.println(stateToString());
     onButtonDown(0);
@@ -1026,6 +1088,8 @@ void testPublicInterface() {
     Serial.println("\n--------------------");
     Serial.println("TEST 6: Setting the lock owner to PHYSICAL");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
+
     Serial.println(stateToString());
     setPhysicalLockOwner();
     custom_assert(getLockOwner() == PHYSICAL, "Lock owner should be PHYSICAL in TEST 6");
@@ -1037,6 +1101,8 @@ void testPublicInterface() {
     Serial.println("\n--------------------");
     Serial.println("TEST 7: Getting the lock owner");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
+
     Serial.println(stateToString());
     lockOwner = getLockOwner();
     custom_assert(lockOwner == PHYSICAL, "Lock owner should be PHYSICAL in TEST 7");
@@ -1048,8 +1114,10 @@ void testPublicInterface() {
 
     // TEST 8: Test API button calls while in PHYSICAL mode
     Serial.println("\n--------------------");
-    Serial.println("TEST 8: Test API button calls while in PHYSICAL mode");
+    Serial.println("TEST 8: Test API onButton...() calls while in PHYSICAL mode -- these should all FAIL.");
     Serial.println("--------------------");
+    delay(3000); // 3-second pause before starting the test
+
     for (int i = 0; i <= 6; i++) {
         Serial.print("Pushing button ");
         Serial.print(i);
@@ -1074,4 +1142,5 @@ void testPublicInterface() {
 
     Serial.println("Public Interface Tests Completed.");
 }
+
 #endif
