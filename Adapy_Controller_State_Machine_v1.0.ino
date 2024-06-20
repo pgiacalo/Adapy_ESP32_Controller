@@ -6,8 +6,8 @@
 // Uncomment the following line to run automatic tests
 // #define TESTING_PUBLIC_INTERFACE
 
-BluetoothSerial SerialBT; // Bluetooth Serial object
-const char *btServerName = "Adapy_BT_Server";
+// BluetoothSerial SerialBT; // Bluetooth Serial object
+// const char *btServerName = "Adapy_BT_Server";
 
 #ifdef TESTING_PUBLIC_INTERFACE
 // Custom assert macro for testing
@@ -124,26 +124,31 @@ const unsigned int timeBetweenCommands =
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
-const unsigned int armedTimeout = 8000;         // milliseconds
-const unsigned int button0HoldThreshold = 8000; // 8 seconds threshold
+static unsigned int armedTimeout = 8000; // milliseconds
+// const unsigned int armedTimeout = 8000;         // milliseconds
+const unsigned int button0HoldThreshold = 8500; // 8 seconds threshold
 const unsigned int debounceDelay = 50;      // 50 milliseconds debounce delay
 const unsigned int ownerLockTimeout = 9000; // milliseconds
 
 HardwareSerial uartSerialPort(1); // uses UART1
 
 // Function declarations
-// PUBLIC FUNCTIONS - YOU CAN SAFELY CALL THESE FUNCTIONS
-void setVirtualLockOwner();         // public interface
-void setPhysicalLockOwner();        // public interface
-void onButtonDown(int buttonId);    // public interface
-void onButtonUp(int buttonId);      // public interface
-ControllerLockOwner getLockOwner(); // public interface
+// PUBLIC API - FUNCTIONS YOU CAN SAFELY CALL
+void setVirtualLockOwner();
+void setPhysicalLockOwner();
+void onButtonDown(int buttonId);
+void onButtonUp(int buttonId);
+void setArmedTimeout(unsigned int timeout);
+unsigned int getArmedTimeout();
+ControllerLockOwner getLockOwner();
 
 // Private Function declarations
 // DO _NOT_ CALL ANY OF THESE FUNCTIONS
 void onVirtualButtonDown(int buttonId);
 void onVirtualButtonUp(int buttonId);
 void sendUARTMessage(char message);
+// void sendPrefixMessage();
+// void sendSuffixMessage();
 String stateToString(); // returns the state of the controller (i.e., ARMED) and
                         // the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
@@ -185,6 +190,7 @@ void setup() {
   initializeLEDs();
 
   // Create the LED control task
+  ledBehavior = LED_BEHAVIOR_OFF;
   xTaskCreate(controlLEDs, "LED Control Task", 1024, NULL, 1, NULL);
   ledBehavior = LED_BEHAVIOR_CYCLE; // Cycle through all the LED colors
 
@@ -214,8 +220,8 @@ void setup() {
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
 
   // Create the Bluetooth server task
-  xTaskCreate(bluetoothTask, "Bluetooth Task", 4096, NULL, 1, NULL);
-  Serial.println("Bluetooth server started");
+  // xTaskCreate(bluetoothTask, "Bluetooth Task", 4096, NULL, 1, NULL);
+  // Serial.println("Bluetooth server started");
 
 #ifdef TESTING_PUBLIC_INTERFACE
   // Create the test task
@@ -224,8 +230,8 @@ void setup() {
 }
 
 void loop() {
-  // TODO - do we want the controller to timeout (matches the existing Adapt
-  // controller behavior) checkLockOwnerTimeout();
+  // TODO - do we want the controller to timeout (matches the existing Adapt controller behavior) 
+  //checkLockOwnerTimeout();
 
   // Scans the state of all the buttons and returns the one with the most recent
   // status change. For physical buttons, this scan also updates the
@@ -245,34 +251,37 @@ void loop() {
   yield(); // gives other tasks a chance to run
 }
 
-void bluetoothTask(void *pvParameters) {
-  SerialBT.begin(
-      btServerName); // Start Bluetooth server with the name "ESP32_BT_Server"
-  Serial.println("Adapy bluetooth server started");
+// void bluetoothTask(void *pvParameters) {
+//   Serial.begin(19200);
+//   if (!SerialBT.begin(btServerName)) { // Initialize Bluetooth with the given server name
+//     Serial.println("An error occurred initializing Bluetooth");
+//   } else {
+//     Serial.println("Adapy bluetooth server started. Waiting for clients...");
+//   }
 
-  while (1) {
-    // Check if we receive anything from the Bluetooth client
-    if (SerialBT.available()) {
-      String message = SerialBT.readString(); // Read what we have received
-      Serial.print("Received: ");
-      Serial.println(message);
+//   while (1) {
+//     // Check if we receive anything from the Bluetooth client
+//     if (SerialBT.available()) {
+//       String message = SerialBT.readString(); // Read what we have received
+//       Serial.print("Received: ");
+//       Serial.println(message);
 
-      // Parse the message and call the appropriate functions
-      if (message.startsWith("DOWN")) {
-        int buttonId = message.substring(4).toInt();
-        onButtonDown(buttonId);
-      } else if (message.startsWith("UP")) {
-        int buttonId = message.substring(2).toInt();
-        onButtonUp(buttonId);
-      }
+//       // Parse the message and call the appropriate functions
+//       if (message.startsWith("DOWN")) {
+//         int buttonId = message.substring(4).toInt();
+//         onButtonDown(buttonId);
+//       } else if (message.startsWith("UP")) {
+//         int buttonId = message.substring(2).toInt();
+//         onButtonUp(buttonId);
+//       }
 
-      // Send a response back to the client
-      SerialBT.println("Echo: " + message);
-    }
-    vTaskDelay(20 /
-               portTICK_PERIOD_MS); // Delay to prevent overwhelming the ESP32
-  }
-}
+//       // Send a response back to the client
+//       SerialBT.println("Echo: " + message);
+//     }
+//     vTaskDelay(20 /
+//                portTICK_PERIOD_MS); // Delay to prevent overwhelming the ESP32
+//   }
+// }
 
 void setPhysicalLockOwner() {
   setLockOwner(PHYSICAL);
@@ -303,6 +312,16 @@ void setLockOwner(ControllerLockOwner newOwner) {
   }
 }
 
+// Setter for armedTimeout
+void setArmedTimeout(unsigned int timeout) {
+    armedTimeout = timeout;
+}
+
+// Getter for armedTimeout
+unsigned int getArmedTimeout() {
+    return armedTimeout;
+}
+
 // Checks if lockOwner has timed out. If timedout, set it to DEFAULT_LOCK_OWNER.
 void checkLockOwnerTimeout() {
   if (millis() - currentControllerState.lockOwnerTimestamp > ownerLockTimeout) {
@@ -316,10 +335,7 @@ void checkLockOwnerTimeout() {
 
 void onButtonDown(int buttonId) {
   if (currentControllerState.lockOwner == PHYSICAL) {
-    Serial.print(
-        "Error: onButtonDown called in PHYSICAL mode for virtual button ");
-    Serial.print(buttonId);
-    Serial.println(". This function should only be called in VIRTUAL mode.");
+    debug("Error: onButtonDown called in PHYSICAL mode for virtual button " + String(buttonId) + ". This function should only be called in VIRTUAL mode.", DEBUG_PRIORITY_HIGH);
     return; // or handle the error appropriately
   }
   onVirtualButtonDown(buttonId);
@@ -327,10 +343,7 @@ void onButtonDown(int buttonId) {
 
 void onButtonUp(int buttonId) {
   if (currentControllerState.lockOwner == PHYSICAL) {
-    Serial.print(
-        "Error: onButtonUp called in PHYSICAL mode for virtual button ");
-    Serial.print(buttonId);
-    Serial.println(". This function should only be called in VIRTUAL mode.");
+    debug("Error: onButtonUp called in PHYSICAL mode for virtual button " + String(buttonId) + ". This function should only be called in VIRTUAL mode.", DEBUG_PRIORITY_HIGH);
     return; // or handle the error appropriately
   }
   onVirtualButtonUp(buttonId);
@@ -436,6 +449,7 @@ void enableUART() {
     debug("enableUART() UART PIN is LOW", DEBUG_PRIORITY_HIGH);
     // Set the UART TX pin to HIGH to enable UART communication
     digitalWrite(uartTxPin, HIGH);
+    // sendPrefixMessage();
 
     // Initialize UART communication
     uartSerialPort.begin(uartBaudRate, SERIAL_8N1, uartRxPin, uartTxPin);
@@ -447,6 +461,8 @@ void enableUART() {
 
 void disableUART() {
   if (isUartEnabled) {
+    // sendSuffixMessage();
+
     // Flush UART and disable it
     uartSerialPort.flush(); // Ensure all data is sent before disabling UART
     uartSerialPort.end();   // End UART communication
@@ -470,10 +486,35 @@ void sendUARTMessage(char message) {
     String debugMessage = formattedMessage;
     debugMessage.replace("\r", "\\r");
     debug("Sent message: " + debugMessage, DEBUG_PRIORITY_HIGH);
+
   } else {
-    debug("UART buffer full, message not sent", DEBUG_PRIORITY_HIGH);
+    debug("UART not available for write", DEBUG_PRIORITY_HIGH);
   }
 }
+
+// void sendPrefixMessage() {
+//     char prefix[2];
+//     prefix[0] = 0xF0; // Hex F0
+//     prefix[1] = '~';  // ~ character
+
+//     if (uartSerialPort.availableForWrite()) {
+//         uartSerialPort.write(prefix, sizeof(prefix));
+//         debug("Sent prefix message: 0xF0 '~'", DEBUG_PRIORITY_HIGH);
+//     } else {
+//         debug("sendPrefixMessage() UART not available for write", DEBUG_PRIORITY_HIGH);
+//     }
+// }
+
+// void sendSuffixMessage() {
+//     char suffix = 0xC0; // Hex C0
+
+//     if (uartSerialPort.availableForWrite()) {
+//         uartSerialPort.write(suffix);
+//         debug("Sent suffix message: 0xC0", DEBUG_PRIORITY_HIGH);
+//     } else {
+//         debug("sendSuffixMessage() UART not available for write", DEBUG_PRIORITY_HIGH);
+//     }
+// }
 
 // Function to format character messages per the required format of Adapt
 // Solutions
