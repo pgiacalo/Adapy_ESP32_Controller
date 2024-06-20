@@ -12,7 +12,7 @@ static int blueLEDBrightness = 255;
 // Interval variables
 static int blinkInterval = 250;  // Blinking interval in milliseconds
 static int fastBlinkInterval = 100;  // Blinking interval in milliseconds
-static int slowBlinkInterval = 1000;  // Blinking interval in milliseconds
+static int slowBlinkInterval = 1250;  // Blinking interval in milliseconds
 static int cycleInterval = 1000; // Cycle through 3 colors interval in milliseconds
 
 void initializeLEDs() {
