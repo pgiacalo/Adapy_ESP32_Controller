@@ -2,12 +2,10 @@
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "LEDControl.h"
 
 // Uncomment the following line to run automatic tests
 // #define TESTING_PUBLIC_INTERFACE
-
-// BluetoothSerial SerialBT; // Bluetooth Serial object
-// const char *btServerName = "Adapy_BT_Server";
 
 #ifdef TESTING_PUBLIC_INTERFACE
 // Custom assert macro for testing
@@ -86,21 +84,6 @@ struct Debounce {
   int lastReading;
 };
 
-// Enums for LED Colors and Behaviors
-enum LedColor { LED_COLOR_RED, LED_COLOR_GREEN, LED_COLOR_BLUE };
-
-enum LedBehavior {
-  LED_BEHAVIOR_OFF,
-  LED_BEHAVIOR_ON,
-  LED_BEHAVIOR_BLINK,
-  LED_BEHAVIOR_FLASH,
-  LED_BEHAVIOR_CYCLE
-};
-
-// Declare the shared variables as extern
-extern volatile LedBehavior ledBehavior;
-extern volatile LedColor ledColor;
-
 // Default values for ButtonState
 constexpr ButtonStateEnum DEFAULT_BUTTON_STATE = BUTTON_UP;
 constexpr ButtonStateEnum DEFAULT_PRIOR_BUTTON_STATE = BUTTON_DOWN;
@@ -114,18 +97,13 @@ const unsigned int NUMBER_OF_BUTTONS = 7;
 
 ControllerState currentControllerState;
 ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
-unsigned int recentButtonChangeTime =
-    0; // the most recent time when any button was pressed or released
-unsigned int recentCommandTime =
-    0; // the most recent time when a command was sent via UART
-const unsigned int timeBetweenCommands =
-    337; // milliseconds, the time between command resends if a button is held
-         // down (measured from lastCommandTime)
+unsigned int recentButtonChangeTime = 0; // the most recent time when any button was pressed or released
+unsigned int recentCommandTime = 0; // the most recent time when a command was sent via UART
+const unsigned int timeBetweenCommands = 337; // milliseconds, time between command resends if a button is held down (measured from lastCommandTime)
 
 Debounce debouncers[NUMBER_OF_BUTTONS];
 
-static unsigned int armedTimeout = 8000; // milliseconds
-// const unsigned int armedTimeout = 8000;         // milliseconds
+static unsigned int armedTimeout = 8500; // milliseconds
 const unsigned int button0HoldThreshold = 8500; // 8 seconds threshold
 const unsigned int debounceDelay = 50;      // 50 milliseconds debounce delay
 const unsigned int ownerLockTimeout = 9000; // milliseconds
@@ -149,8 +127,7 @@ void onVirtualButtonUp(int buttonId);
 void sendUARTMessage(char message);
 // void sendPrefixMessage();
 // void sendSuffixMessage();
-String stateToString(); // returns the state of the controller (i.e., ARMED) and
-                        // the state of each of the buttons (i.e., UP or DOWN)
+String stateToString(); // returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
 ButtonState scanButtonStates();
 void initializeButtonPins();
@@ -164,10 +141,6 @@ void debug(const String &msg, int level);
 void checkLockOwnerTimeout();
 void handleControllerStateTransitions(ButtonState recentButton);
 void transmitCommands(ButtonState recentButton);
-void handleLEDs();
-void cycleLEDs();
-void fadeLED(int pin, int duration);
-void updateLEDState();
 void setLEDState();
 bool buttonChanged(const ButtonState &button);
 bool buttonHeldDown(const ButtonState &button);
@@ -286,13 +259,13 @@ void loop() {
 void setPhysicalLockOwner() {
   setLockOwner(PHYSICAL);
   ledColor = LED_COLOR_GREEN;
-  ledBehavior = LED_BEHAVIOR_FLASH;
+  ledBehavior = LED_BEHAVIOR_FAST_BLINK;
 }
 
 void setVirtualLockOwner() {
   setLockOwner(VIRTUAL);
   ledColor = LED_COLOR_BLUE;
-  ledBehavior = LED_BEHAVIOR_FLASH;
+  ledBehavior = LED_BEHAVIOR_FAST_BLINK;
 }
 
 ControllerLockOwner getLockOwner() { return currentControllerState.lockOwner; }
@@ -665,8 +638,7 @@ ButtonState checkPhysicalButtons() {
 ButtonState checkVirtualButtons() {
   debug("checkVirtualButtons() called", DEBUG_PRIORITY_LOW);
 
-  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP,
-                              0,  0}; // Default to no recent button event
+  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0,  0}; // Default to no recent button event
 
   for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     if (buttonChanged(currentButtonStates[i])) {
@@ -919,8 +891,7 @@ void handleControllerStateTransitions(ButtonState recentButton) {
 }
 
 /**
- * Returns true if the buttonState has changed since its priorButtonState, else
- * false
+ * Returns true if the buttonState has changed since its priorButtonState, else false
  */
 bool buttonChanged(const ButtonState &button) {
   return (button.buttonState != button.priorButtonState &&
@@ -928,8 +899,7 @@ bool buttonChanged(const ButtonState &button) {
 }
 
 /**
- * Returns true if the buttonState has changed since its priorButtonState, else
- * false
+ * Returns true if the buttonState has changed since its priorButtonState, else false
  */
 bool buttonChangedTo(const ButtonState &button, ButtonStateEnum newState) {
   return (button.buttonState == newState &&
@@ -1019,6 +989,9 @@ void transmitCommands(ButtonState recentButton) {
   }
 }
 
+/**
+ * Returns true if more than one button is being held down, else false
+ */
 bool multipleButtonsDown() {
   int downCount = 0;
   for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
