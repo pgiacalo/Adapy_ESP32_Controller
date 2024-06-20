@@ -4,7 +4,7 @@
 #include <freertos/task.h>
 #include "LEDControl.h"
 
-// Uncomment the following line to run automatic tests
+// Uncomment the following line to run automated tests
 // #define TESTING_PUBLIC_INTERFACE
 
 // GPIO pins for all 7 buttons (Controller buttons #0 thru #6)
@@ -44,9 +44,15 @@ enum ControllerStateEnum {
   BUTTON_0_STUCK_DOWN
 };
 
-enum ButtonStateEnum { BUTTON_UP, BUTTON_DOWN };
+enum ButtonStateEnum { 
+  BUTTON_UP, 
+  BUTTON_DOWN 
+};
 
-enum ControllerLockOwner { PHYSICAL, VIRTUAL };
+enum ControllerLockOwner { 
+  PHYSICAL, 
+  VIRTUAL 
+};
 
 struct ButtonState {
   int buttonId;
@@ -107,6 +113,8 @@ void onButtonUp(int buttonId);
 void setArmedTimeout(unsigned int timeout);
 unsigned int getArmedTimeout();
 ControllerLockOwner getLockOwner();
+String buttonStateToString(const ButtonState &button); // returns the state of the given button (the values from the ButtonState struct)
+String controllerStateToString(); // returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 // ==============================================
 // END OF PUBLIC API
 // ==============================================
@@ -118,8 +126,6 @@ void onVirtualButtonUp(int buttonId);
 void sendUARTMessage(char message);
 // void sendPrefixMessage();
 // void sendSuffixMessage();
-String buttonStateToString(const ButtonState &button); // returns the state of the given button (the values from the ButtonState struct)
-String controllerStateToString(); // returns the state of the controller (i.e., ARMED) and the state of each of the buttons (i.e., UP or DOWN)
 bool updateButtonState(int buttonId, ButtonStateEnum action);
 ButtonState scanButtonStates();
 void initializeButtonPins();
@@ -137,10 +143,9 @@ void setLEDState();
 bool buttonChanged(const ButtonState &button);
 bool buttonHeldDown(const ButtonState &button);
 bool buttonChangedTo(const ButtonState &button, ButtonStateEnum newState);
-bool buttonHeldDownFor(const ButtonState &button,
-                       unsigned long timeoutInMillis);
-#ifdef TESTING_PUBLIC_INTERFACE
+bool buttonHeldDownFor(const ButtonState &button, unsigned long timeoutInMillis);
 // conditional compilation of testing function declarations
+#ifdef TESTING_PUBLIC_INTERFACE
 void testTask(void *pvParameters);
 void testPublicInterface();
 #endif
@@ -185,14 +190,10 @@ void setup() {
   debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
 
-  // Create the Bluetooth server task
-  // xTaskCreate(bluetoothTask, "Bluetooth Task", 4096, NULL, 1, NULL);
-  // Serial.println("Bluetooth server started");
-
-#ifdef TESTING_PUBLIC_INTERFACE
-  // Create the test task
-  xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);
-#endif
+  #ifdef TESTING_PUBLIC_INTERFACE
+    // Create the test task
+    xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);
+  #endif
 }
 
 void loop() {
@@ -212,8 +213,7 @@ void loop() {
 
   // debug(controllerStateToString(), DEBUG_PRIORITY_LOW);
 
-  // vTaskDelay(30 / portTICK_PERIOD_MS); // Yields control to FreeRTOS (Delays
-  // loop() execution for 30 ms)
+  // vTaskDelay(30 / portTICK_PERIOD_MS); // Yields control to FreeRTOS (Delays loop execution for 30 ms)
   yield(); // gives other tasks a chance to run
 }
 
