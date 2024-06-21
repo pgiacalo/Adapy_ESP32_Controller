@@ -5,7 +5,7 @@
 #include "LEDControl.h"
 
 // Uncomment the following line to run automated tests
-// #define TESTING_PUBLIC_INTERFACE
+#define TESTING_PUBLIC_INTERFACE
 
 // It is not clear whether power-up signal pulses are required. 
 // So this boolean flag is provided to easily turn them ON or OFF. 
@@ -830,15 +830,15 @@ void handleButton0StuckDownState(ButtonState recentButton) {
 }
 
 void handleArmedState(ButtonState recentButton) {
-    if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_DOWN) {
+    if (recentButton.buttonId == 0 && buttonHeldDownFor(recentButton, button0HoldThreshold)) {
+        updateControllerState(INACTIVE);
+        disableUART();
+    } else if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_DOWN) {
         updateControllerState(TRANSMITTING);
         enableUART();
-        debug("handleArmedState() Controller state updated to TRANSMITTING: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     } else if ((millis() - recentButtonChangeTime) > armedTimeout) {
         updateControllerState(DISARMED);
         disableUART();
-        debug("handleArmedState() ++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
-        debug("handleArmedState() Controller state updated from ARMED to DISARMED (>timeout): " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
 }
 
@@ -851,10 +851,14 @@ void handleTransmittingState(ButtonState recentButton) {
 }
 
 void handleDisarmedState(ButtonState recentButton) {
-    if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_DOWN)) {
-        updateControllerState(ARMED);
-        enableUART();
-        debug("handleDisarmedState() Controller state updated from DISARMED to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+    if (recentButton.buttonId == 0) {
+        if (buttonChangedTo(recentButton, BUTTON_DOWN)) {
+            updateControllerState(ARMED);
+            enableUART();
+        } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
+            updateControllerState(INACTIVE);
+            disableUART();
+        }
     }
 }
 
@@ -884,8 +888,7 @@ bool buttonHeldDown(const ButtonState &button) {
           button.actionTime > button.priorActionTime);
 }
 
-bool buttonHeldDownFor(const ButtonState &button,
-                       unsigned long timeoutInMillis) {
+bool buttonHeldDownFor(const ButtonState &button, unsigned long timeoutInMillis) {
   return (button.buttonState == BUTTON_DOWN &&
           (millis() - button.actionTime) > timeoutInMillis);
 }
