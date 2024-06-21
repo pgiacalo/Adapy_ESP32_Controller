@@ -2,7 +2,7 @@
  * A sketch written for the ESP32 Dev Module that replicates the behaviors 
  * and proprietary UART output signals of an existing 7-button controller. 
  * The existing controller is connected to a black box that drives 
- * motors that move and posiion a car seat. 
+ * motors that move and position a car seat. 
  *
  * Author: Philip Giacalone
  * Date: June 21, 2024
@@ -41,7 +41,7 @@ const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
-constexpr int uartRxPin = 16;   //NOTE: the Rx pin is NOT used, since we're assuming the legacy controller on sends signals.
+constexpr int uartRxPin = 16;   //NOTE: the Rx pin is NOT used, since we're assuming the legacy controller only sends signals.
 constexpr int uartEnabledDelay = 150; // milliseconds - the time between enabling the uart and the first signal transmissions
 bool isUartEnabled = false;
 
