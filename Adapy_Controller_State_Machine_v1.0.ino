@@ -7,6 +7,8 @@
 // Uncomment the following line to run automated tests
 // #define TESTING_PUBLIC_INTERFACE
 
+// It is not clear whether power-up signal pulses are required. 
+// So this boolean flag is provided to easily turn them ON or OFF. 
 bool SEND_POWER_UP_PULSES = true;
 
 // Debug levels
@@ -186,7 +188,7 @@ void setup() {
 
   //it's not clear whether or not these pulses are required at power-up
   if (SEND_POWER_UP_PULSES){
-    sendStartupPulses();
+    sendPowerUpPulses();
   }
 
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
@@ -291,7 +293,7 @@ void checkLockOwnerTimeout() {
  * Pulse 4: 1 pulse lasting 250 uSec (HIGH)
  *    The voltage then drops to LOW 
  */
-void sendStartupPulses() {
+void sendPowerUpPulses() {
     //delay for 1 second to wait for the ESP32 UART power-up voltage noise to end
     delay(1000);
     // Generate Pulse 1 for 2.5 seconds
@@ -804,9 +806,9 @@ void handleInactiveState(ButtonState recentButton) {
     if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_UP)) {
         updateControllerState(DISARMED);
         disableUART();
-        debug("1) Controller state updated from INACTIVE to DISARMED: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
+        debug("handleInactiveState() Controller state updated from INACTIVE to DISARMED: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
     } else {
-        debug("2) Controller state is still INACTIVE: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
+        debug("handleInactiveState() Controller state is still INACTIVE: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
     }
 }
 
@@ -815,11 +817,14 @@ void handleButton0StuckDownState(ButtonState recentButton) {
         if (buttonChangedTo(recentButton, BUTTON_UP)) {
             updateControllerState(ARMED);
             enableUART();
-            debug("3) Controller state updated from BUTTON_0_STUCK_DOWN to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+            debug("handleButton0StuckDownState() Controller state updated from BUTTON_0_STUCK_DOWN to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
         } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
             updateControllerState(BUTTON_0_STUCK_DOWN);
             disableUART();
-            debug("4) Controller state updated to BUTTON_0_STUCK_DOWN: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+            debug("handleButton0StuckDownState() Controller state updated to BUTTON_0_STUCK_DOWN: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        } else {
+            debug("handleButton0StuckDownState() LOGIC NEEDED HERE: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+            debug("handleButton0StuckDownState() ButtonState: " + buttonStateToString(recentButton), DEBUG_PRIORITY_HIGH);
         }
     }
 }
@@ -828,12 +833,12 @@ void handleArmedState(ButtonState recentButton) {
     if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_DOWN) {
         updateControllerState(TRANSMITTING);
         enableUART();
-        debug("5) Controller state updated to TRANSMITTING: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        debug("handleArmedState() Controller state updated to TRANSMITTING: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     } else if ((millis() - recentButtonChangeTime) > armedTimeout) {
         updateControllerState(DISARMED);
         disableUART();
-        debug("++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
-        debug("8) Controller state updated from ARMED to DISARMED (>timeout): " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        debug("handleArmedState() ++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
+        debug("handleArmedState() Controller state updated from ARMED to DISARMED (>timeout): " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
 }
 
@@ -841,7 +846,7 @@ void handleTransmittingState(ButtonState recentButton) {
     if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_UP) {
         updateControllerState(ARMED);
         enableUART();
-        debug("6) Controller state updated from TRANSMITTING to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        debug("handleTransmittingState() Controller state updated from TRANSMITTING to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
 }
 
@@ -849,7 +854,7 @@ void handleDisarmedState(ButtonState recentButton) {
     if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_DOWN)) {
         updateControllerState(ARMED);
         enableUART();
-        debug("7) Controller state updated from DISARMED to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        debug("handleDisarmedState() Controller state updated from DISARMED to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
 }
 
