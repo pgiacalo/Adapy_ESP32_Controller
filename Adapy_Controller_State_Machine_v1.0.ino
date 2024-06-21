@@ -7,34 +7,32 @@
 // Uncomment the following line to run automated tests
 // #define TESTING_PUBLIC_INTERFACE
 
-// GPIO pins for all 7 buttons (Controller buttons #0 thru #6)
-constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
-
-// The letter commands sent to the Adapt Systems black box by each of the
-// buttons (for on-design operations)
-const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
-
-// Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
-constexpr int uartTxPin = 17;
-constexpr int uartRxPin = 16;
-constexpr int uartEnabledDelay =
-    150; // milliseconds - the time between enabling the uart and the first
-         // signal transmissions
-bool isUartEnabled = false;
-
 // Debug levels
 constexpr int DEBUG_PRIORITY_HIGH = 3;
 constexpr int DEBUG_PRIORITY_MEDIUM = 2;
 constexpr int DEBUG_PRIORITY_LOW = 1;
 constexpr int DEBUG_PRIORITY_NONE = 0;
-int debugSettingPriority = DEBUG_PRIORITY_HIGH;
+// Debug messages are printed to the console when a debug's priority is >= debugSetting
+int debugSetting = DEBUG_PRIORITY_HIGH;
+
+// GPIO pins for all 7 buttons (Controller buttons #0 thru #6)
+constexpr int buttonPins[] = {32, 33, 21, 26, 18, 27, 4};
+const unsigned int NUMBER_OF_BUTTONS = sizeof(buttonPins) / sizeof(buttonPins[0]);
+
+// The letter commands sent to the Adapt Systems black box by each of the buttons (for on-design operations)
+const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
+
+// Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
+constexpr int uartTxPin = 17;
+constexpr int uartRxPin = 16;
+constexpr int uartEnabledDelay = 150; // milliseconds - the time between enabling the uart and the first signal transmissions
+bool isUartEnabled = false;
 
 // Serial port parameters
-constexpr long serialBaudRate =
-    19200; // baud rate for USB console output containing debug messages
-constexpr long uartBaudRate =
-    19200; // baud rate for UART communication (19200 is the required rate for
-           // Adapt Solutions controller messages)
+constexpr long serialBaudRate = 19200; // baud rate for USB console output containing debug messages
+constexpr long uartBaudRate = 19200; // baud rate for UART communication (19200 is required for Adapt Solutions)
+
+HardwareSerial uartSerialPort(1); // uses UART1
 
 enum ControllerStateEnum {
   INACTIVE,
@@ -44,23 +42,9 @@ enum ControllerStateEnum {
   BUTTON_0_STUCK_DOWN
 };
 
-enum ButtonStateEnum { 
-  BUTTON_UP, 
-  BUTTON_DOWN 
-};
-
 enum ControllerLockOwner { 
   PHYSICAL, 
   VIRTUAL 
-};
-
-struct ButtonState {
-  int buttonId;
-  ButtonStateEnum buttonState;
-  unsigned long actionTime;
-  ButtonStateEnum priorButtonState;
-  unsigned long priorActionTime;
-  unsigned long debounceTime;
 };
 
 struct ControllerState {
@@ -72,10 +56,29 @@ struct ControllerState {
   unsigned long lockOwnerTimestamp;
 };
 
+ControllerState currentControllerState;
+
+enum ButtonStateEnum { 
+  BUTTON_UP, 
+  BUTTON_DOWN 
+};
+
+struct ButtonState {
+  int buttonId;
+  ButtonStateEnum buttonState;
+  unsigned long actionTime;
+  ButtonStateEnum priorButtonState;
+  unsigned long priorActionTime;
+};
+
+ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
+
 struct Debounce {
   unsigned long lastDebounceTime;
   int lastReading;
 };
+
+Debounce debouncers[NUMBER_OF_BUTTONS];
 
 // Default values for ButtonState
 constexpr ButtonStateEnum DEFAULT_BUTTON_STATE = BUTTON_UP;
@@ -86,22 +89,15 @@ constexpr ControllerStateEnum DEFAULT_CONTROLLER_STATE = DISARMED;
 constexpr ControllerStateEnum DEFAULT_PRIOR_CONTROLLER_STATE = DISARMED;
 constexpr ControllerLockOwner DEFAULT_LOCK_OWNER = PHYSICAL;
 
-const unsigned int NUMBER_OF_BUTTONS = 7;
-
-ControllerState currentControllerState;
-ButtonState currentButtonStates[NUMBER_OF_BUTTONS];
 unsigned int recentButtonChangeTime = 0; // the most recent time when any button was pressed or released
 unsigned int recentCommandTime = 0; // the most recent time when a command was sent via UART
 const unsigned int timeBetweenCommands = 337; // milliseconds, time between command resends if a button is held down (measured from lastCommandTime)
-
-Debounce debouncers[NUMBER_OF_BUTTONS];
 
 static unsigned int armedTimeout = 8500; // milliseconds
 const unsigned int button0HoldThreshold = 8500; // 8 seconds threshold
 const unsigned int debounceDelay = 50;      // 50 milliseconds debounce delay
 const unsigned int ownerLockTimeout = 60000; // milliseconds
 
-HardwareSerial uartSerialPort(1); // uses UART1
 
 // ==============================================
 // PUBLIC API - FUNCTIONS YOU CAN SAFELY CALL
@@ -176,19 +172,20 @@ void setup() {
   scanButtonStates();
 
   // Initialize button states
+  debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
   debug("setup() calling initializeButtonStates()", DEBUG_PRIORITY_LOW);
   initializeButtonStates();
-  debug(controllerStateToString(), DEBUG_PRIORITY_LOW);
+  debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
 
-  debug(controllerStateToString(), DEBUG_PRIORITY_LOW);
   debug("setup() calling initializeControllerState()", DEBUG_PRIORITY_LOW);
   initializeControllerState();
-  debug(controllerStateToString(), DEBUG_PRIORITY_LOW);
 
   ledBehavior = LED_BEHAVIOR_OFF;
 
-  debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
+  debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
+
+  doStartupPulses();
 
   #ifdef TESTING_PUBLIC_INTERFACE
     // Create the test task
@@ -197,8 +194,10 @@ void setup() {
 }
 
 void loop() {
-  // TODO - do we want the controller owner to timeout and return to the default 
-  //checkLockOwnerTimeout();
+  // The controller lock owner returns to the default owner, if there has been
+  // no button activity for longer than the lock owner timeout. This handles the 
+  // use-case in which a bluetooth device stops communicating. 
+  checkLockOwnerTimeout();
 
   // Scans the state of all the buttons and returns the one with the most recent
   // status change. For physical buttons, this scan also updates the
@@ -272,6 +271,40 @@ void checkLockOwnerTimeout() {
   }
 }
 
+void doStartupPulses() {
+    // Generate the first pulse
+    digitalWrite(uartTxPin, HIGH);
+    delay(2500); // 2.5 seconds
+    digitalWrite(uartTxPin, LOW);
+
+    // Wait for 1 second
+    delay(1000); // 1 second
+
+    // Generate the second pulse
+    digitalWrite(uartTxPin, HIGH);
+    delayMicroseconds(250); // 250 microseconds
+    digitalWrite(uartTxPin, LOW);
+
+    // Wait for 2 seconds
+    delay(2000); // 2 seconds
+
+    // Generate the third pulse
+    digitalWrite(uartTxPin, HIGH);
+    delayMicroseconds(250); // 250 microseconds
+    digitalWrite(uartTxPin, LOW);
+
+    // Wait for 2 seconds
+    delay(2000); // 2 seconds
+
+    // Generate the fourth pulse
+    digitalWrite(uartTxPin, HIGH);
+    delayMicroseconds(250); // 250 microseconds
+    digitalWrite(uartTxPin, LOW);
+
+    // After generating the pulses, you can either stop or repeat the sequence
+    // delay(10000); // Optional: Delay before repeating the sequence
+}
+
 void onButtonDown(int buttonId) {
   if (currentControllerState.lockOwner == PHYSICAL) {
     debug("Error: onButtonDown called in PHYSICAL mode for virtual button " + String(buttonId) + ". This function should only be called in VIRTUAL mode.", DEBUG_PRIORITY_HIGH);
@@ -317,8 +350,7 @@ String buttonStateToString(const ButtonState &button) {
             String(button.priorButtonState == BUTTON_DOWN ? "DOWN" : "UP") +
             ", ";
   result += "actionTime: " + String(button.actionTime) + ", ";
-  result += "priorActionTime: " + String(button.priorActionTime) + ", ";
-  result += "debounceTime: " + String(button.debounceTime);
+  result += "priorActionTime: " + String(button.priorActionTime);
   result += " }";
   return result;
 }
@@ -400,7 +432,8 @@ void enableUART() {
     // Initialize UART communication
     uartSerialPort.begin(uartBaudRate, SERIAL_8N1, uartRxPin, uartTxPin);
     isUartEnabled = true;
-    // Wait for 100 ms
+    // Delay so the first message signals are not sent immediately after the UART voltage is pulled HIGH.
+    // This matches the Adapt Systems controller behavior.
     delay(uartEnabledDelay);
   }
 }
@@ -438,7 +471,6 @@ void sendUARTMessage(char message) {
   }
 }
 
-
 // Function to format character messages per the required format of Adapt
 // Solutions
 String formatMessage(char inputChar) {
@@ -466,8 +498,7 @@ void initializeButtonPins() {
     }
 
     // Also initialize the button states to match the initial readings
-    currentButtonStates[i] = {
-        i, state, now, DEFAULT_PRIOR_BUTTON_STATE, now, debounceDelay};
+    currentButtonStates[i] = {i, state, now, DEFAULT_PRIOR_BUTTON_STATE, now};
 
     // Debug: Initial reading of the button pin
     String readingStr = (initialReading == LOW) ? "LOW (DOWN)" : "HIGH (UP)";
@@ -500,7 +531,7 @@ void initializePhysicalButtonStates() {
     } else {
       state = BUTTON_UP;
     }
-    currentButtonStates[i] = {i, state, now, state, now, debounceDelay};
+    currentButtonStates[i] = {i, state, now, state, now};
     debouncers[i].lastReading = reading;
   }
   debug("initializePhysicalButtonStates() initialized physical button states",
@@ -512,7 +543,7 @@ void initializeVirtualButtonStates() {
   for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     // Assuming virtual buttons might be initialized differently
     // Example: set all virtual buttons to BUTTON_UP by default
-    currentButtonStates[i] = {i, BUTTON_UP, now, BUTTON_UP, now, debounceDelay};
+    currentButtonStates[i] = {i, BUTTON_UP, now, BUTTON_UP, now};
     debouncers[i].lastReading = HIGH; // Default to HIGH (not pressed)
   }
   debug("initializeVirtualButtonStates() initialized virtual button states",
@@ -524,7 +555,7 @@ void initializeVirtualButtonStates() {
  * changed state most recently
  */
 ButtonState scanButtonStates() {
-  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0,  0}; // Default to no recent button event
+  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0}; // Default to no recent button event
 
   switch (currentControllerState.lockOwner) {
   case PHYSICAL:
@@ -547,7 +578,7 @@ ButtonState scanButtonStates() {
 }
 
 ButtonState checkPhysicalButtons() {
-  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0,  0}; // Default to no recent button event
+  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0}; // Default to no recent button event
 
   for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     int pin = buttonPins[i];
@@ -583,7 +614,7 @@ ButtonState checkPhysicalButtons() {
 ButtonState checkVirtualButtons() {
   debug("checkVirtualButtons() called", DEBUG_PRIORITY_LOW);
 
-  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0,  0}; // Default to no recent button event
+  ButtonState recentButton = {-1, BUTTON_UP, 0, BUTTON_UP, 0}; // Default to no recent button event
 
   for (int i = 0; i < NUMBER_OF_BUTTONS; i++) {
     if (buttonChanged(currentButtonStates[i])) {
@@ -616,7 +647,7 @@ bool updateButtonState(int buttonId, ButtonStateEnum action) {
 }
 
 void debug(const String &msg, int messagePriority) {
-  if (messagePriority >= debugSettingPriority) {
+  if (messagePriority >= debugSetting) {
     Serial.println(msg);
   }
 }
@@ -723,7 +754,7 @@ void initializeControllerState() {
 
 void handleControllerStateTransitions(ButtonState recentButton) {
   if (recentButton.buttonId == -1) {
-    // Ignore this. It's not a button; it's a placeholder.
+    // Ignore this. ButtonId -1 indicates there were NO recent button events.
     return;
   }
 
@@ -954,7 +985,11 @@ void initializeTimes() {
   recentCommandTime = millis();
 }
 
-// /**
+// /**-----------------------------------------------
+//  * Keeping this code for now, although it is likely NOT needed. The prefix and suffix
+//  * signals seen on the oscilloscope from the Adapt Solutions legacy controller appear 
+//  * to be voltage noise, rather than meaningful UART signals. 
+//  * -----------------------------------------------
 //  * Function intended to output a short prefix message via UART before actual messages are sent.
 //  * This does not seem to be needed, since what looked like prefixes are actually just noise.
 //  */ 
@@ -1289,6 +1324,7 @@ void testPublicInterface() {
   Serial.println("----END----");
 
   Serial.println("Public Interface Tests Completed.");
+
 }
 
 #endif
