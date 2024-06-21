@@ -7,6 +7,8 @@
 // Uncomment the following line to run automated tests
 // #define TESTING_PUBLIC_INTERFACE
 
+bool SEND_POWER_UP_PULSES = true;
+
 // Debug levels
 constexpr int DEBUG_PRIORITY_HIGH = 3;
 constexpr int DEBUG_PRIORITY_MEDIUM = 2;
@@ -182,10 +184,13 @@ void setup() {
 
   ledBehavior = LED_BEHAVIOR_OFF;
 
+  //it's not clear whether or not these pulses are required at power-up
+  if (SEND_POWER_UP_PULSES){
+    sendStartupPulses();
+  }
+
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
   debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
-
-  doStartupPulses();
 
   #ifdef TESTING_PUBLIC_INTERFACE
     // Create the test task
@@ -271,16 +276,33 @@ void checkLockOwnerTimeout() {
   }
 }
 
-void doStartupPulses() {
-    // Generate the first pulse
+/**
+ * On power-up, the Adapt Solutions legacy controller sends out 4 voltage pulses.
+ * It is not clear whether these pulses are actually required. But we're replicating 
+ * them just in case they are required. 
+ *
+ * On power-up, the UART output voltage starts LOW
+ * Pulse 1: The first pulse is 2.5 seconds HIGH
+ *    This is followed 1.7 seconds LOW
+ * Pulse 2: 1 pulse lasting 250 uSec (HIGH)
+ *    This is followed by 1 second LOW 
+ * Pulse 3: 1 pulse lasting 250 uSec (HIGH)
+ *    This is followed by 1 second LOW 
+ * Pulse 4: 1 pulse lasting 250 uSec (HIGH)
+ *    The voltage then drops to LOW 
+ */
+void sendStartupPulses() {
+    //delay for 1 second to wait for the ESP32 UART power-up voltage noise to end
+    delay(1000);
+    // Generate Pulse 1 for 2.5 seconds
     digitalWrite(uartTxPin, HIGH);
     delay(2500); // 2.5 seconds
     digitalWrite(uartTxPin, LOW);
 
-    // Wait for 1 second
-    delay(1000); // 1 second
+    // Wait for 1.5 seconds
+    delay(1700); // 1 second
 
-    // Generate the second pulse
+    // Generate Pulse 2 for 250 uSecs
     digitalWrite(uartTxPin, HIGH);
     delayMicroseconds(250); // 250 microseconds
     digitalWrite(uartTxPin, LOW);
@@ -288,7 +310,7 @@ void doStartupPulses() {
     // Wait for 2 seconds
     delay(2000); // 2 seconds
 
-    // Generate the third pulse
+    // Generate Pulse 3 for 250 uSecs
     digitalWrite(uartTxPin, HIGH);
     delayMicroseconds(250); // 250 microseconds
     digitalWrite(uartTxPin, LOW);
@@ -296,13 +318,11 @@ void doStartupPulses() {
     // Wait for 2 seconds
     delay(2000); // 2 seconds
 
-    // Generate the fourth pulse
+    // Generate Pulse 4 for 250 uSecs
     digitalWrite(uartTxPin, HIGH);
     delayMicroseconds(250); // 250 microseconds
     digitalWrite(uartTxPin, LOW);
-
-    // After generating the pulses, you can either stop or repeat the sequence
-    // delay(10000); // Optional: Delay before repeating the sequence
+    //we end with the output LOW
 }
 
 void onButtonDown(int buttonId) {
@@ -667,10 +687,8 @@ bool updateControllerState(ControllerStateEnum newState) {
           DEBUG_PRIORITY_LOW);
 
     // Update the prior state information
-    currentControllerState.priorControllerState =
-        currentControllerState.controllerState;
-    currentControllerState.priorStateTransitionTime =
-        currentControllerState.stateTransitionTime;
+    currentControllerState.priorControllerState = currentControllerState.controllerState;
+    currentControllerState.priorStateTransitionTime = currentControllerState.stateTransitionTime;
 
     // Update the current state and time
     currentControllerState.controllerState = newState;
@@ -751,118 +769,88 @@ void initializeControllerState() {
   debug("initializeControllerState() initialized state to: " + controllerStateToString(),
         DEBUG_PRIORITY_HIGH);
 }
-
 void handleControllerStateTransitions(ButtonState recentButton) {
-  if (recentButton.buttonId == -1) {
-    // Ignore this. ButtonId -1 indicates there were NO recent button events.
-    return;
-  }
-
-  // Log the current state before any transitions
-  debug("handleControllerStateTransitions(ENTERED): Current state: " +
-            controllerStateToString(),
-        DEBUG_PRIORITY_LOW);
-
-  // The INACTIVE state only happens if Button 0 is DOWN when the controller is
-  // first turned on This is an error condition
-  if (currentControllerState.controllerState == INACTIVE) {
-    if (recentButton.buttonId == 0 &&
-        buttonChangedTo(recentButton, BUTTON_UP)) {
-      // releasing Button 0 puts the controller into the disarmed state
-      updateControllerState(DISARMED);
-      disableUART();
-      debug("1) Controller state updated from INACTIVE to DISARMED: " +
-                controllerStateToString(),
-            DEBUG_PRIORITY_LOW);
-      return;
-    } else {
-      // Only releasing Button 0 can get the controller working
-      // All the other buttons are inactivated, so just return without changing
-      // the state
-      debug("2) Controller state is still INACTIVE: " + controllerStateToString(),
-            DEBUG_PRIORITY_LOW);
-      return;
+    if (recentButton.buttonId == -1) {
+        // Ignore this. ButtonId -1 indicates there were NO recent button events.
+        return;
     }
-  }
 
-  // Check if Button 0 is stuck DOWN or if Button 0 was stuck and has just been
-  // released
-  if (recentButton.buttonId == 0) {
-    if (currentControllerState.controllerState == BUTTON_0_STUCK_DOWN) {
-      if (buttonChangedTo(recentButton, BUTTON_UP)) {
+    // Log the current state before any transitions
+    debug("handleControllerStateTransitions(ENTERED): Current state: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
+
+    switch (currentControllerState.controllerState) {
+        case INACTIVE:
+            handleInactiveState(recentButton);
+            break;
+        case BUTTON_0_STUCK_DOWN:
+            handleButton0StuckDownState(recentButton);
+            break;
+        case ARMED:
+            handleArmedState(recentButton);
+            break;
+        case TRANSMITTING:
+            handleTransmittingState(recentButton);
+            break;
+        case DISARMED:
+            handleDisarmedState(recentButton);
+            break;
+        default:
+            // Handle unexpected state if necessary
+            break;
+    }
+}
+
+void handleInactiveState(ButtonState recentButton) {
+    if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_UP)) {
+        updateControllerState(DISARMED);
+        disableUART();
+        debug("1) Controller state updated from INACTIVE to DISARMED: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
+    } else {
+        debug("2) Controller state is still INACTIVE: " + controllerStateToString(), DEBUG_PRIORITY_LOW);
+    }
+}
+
+void handleButton0StuckDownState(ButtonState recentButton) {
+    if (recentButton.buttonId == 0) {
+        if (buttonChangedTo(recentButton, BUTTON_UP)) {
+            updateControllerState(ARMED);
+            enableUART();
+            debug("3) Controller state updated from BUTTON_0_STUCK_DOWN to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
+            updateControllerState(BUTTON_0_STUCK_DOWN);
+            disableUART();
+            debug("4) Controller state updated to BUTTON_0_STUCK_DOWN: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+        }
+    }
+}
+
+void handleArmedState(ButtonState recentButton) {
+    if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_DOWN) {
+        updateControllerState(TRANSMITTING);
+        enableUART();
+        debug("5) Controller state updated to TRANSMITTING: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+    } else if ((millis() - recentButtonChangeTime) > armedTimeout) {
+        updateControllerState(DISARMED);
+        disableUART();
+        debug("++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
+        debug("8) Controller state updated from ARMED to DISARMED (>timeout): " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+    }
+}
+
+void handleTransmittingState(ButtonState recentButton) {
+    if (recentButton.buttonId > 0 && recentButton.buttonId < 7 && recentButton.buttonState == BUTTON_UP) {
         updateControllerState(ARMED);
         enableUART();
-
-        debug(
-            "3) Controller state updated from BUTTON_0_STUCK_DOWN to ARMED: " +
-                controllerStateToString(),
-            DEBUG_PRIORITY_HIGH);
-        return;
-      }
-    } else if (buttonHeldDownFor(recentButton, button0HoldThreshold)) {
-      updateControllerState(BUTTON_0_STUCK_DOWN);
-      disableUART();
-
-      debug("4) Controller state updated to BUTTON_0_STUCK_DOWN: " +
-                controllerStateToString(),
-            DEBUG_PRIORITY_HIGH);
-      return;
+        debug("6) Controller state updated from TRANSMITTING to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
-  }
+}
 
-  // Transition to TRANSMITTING when ARMED and button 1-6 is DOWN
-  if (currentControllerState.controllerState == ARMED &&
-      recentButton.buttonId > 0 && recentButton.buttonId < 7 &&
-      recentButton.buttonState == BUTTON_DOWN) {
-    updateControllerState(TRANSMITTING);
-    enableUART();
-
-    debug("5) Controller state updated to TRANSMITTING: " + controllerStateToString(),
-          DEBUG_PRIORITY_HIGH);
-    return;
-  }
-
-  // Transition back to ARMED when TRANSMITTING and button 1-6 is UP
-  if (currentControllerState.controllerState == TRANSMITTING &&
-      recentButton.buttonId > 0 && recentButton.buttonId < 7 &&
-      recentButton.buttonState == BUTTON_UP) {
-    updateControllerState(ARMED);
-    enableUART();
-
-    debug("6) Controller state updated from TRANSMITTING to ARMED: " +
-              controllerStateToString(),
-          DEBUG_PRIORITY_HIGH);
-    return;
-  }
-
-  // Check if the controller is DISARMED and should transition to ARMED
-  if (currentControllerState.controllerState == DISARMED) {
-    if (recentButton.buttonId == 0 &&
-        buttonChangedTo(recentButton, BUTTON_DOWN)) {
-      updateControllerState(ARMED);
-      enableUART();
-
-      debug("7) Controller state updated from DISARMED to ARMED: " +
-                controllerStateToString(),
-            DEBUG_PRIORITY_HIGH);
-      return;
+void handleDisarmedState(ButtonState recentButton) {
+    if (recentButton.buttonId == 0 && buttonChangedTo(recentButton, BUTTON_DOWN)) {
+        updateControllerState(ARMED);
+        enableUART();
+        debug("7) Controller state updated from DISARMED to ARMED: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
     }
-  }
-
-  // Check if we've been in the ARMED state for too long
-  if (currentControllerState.controllerState == ARMED) {
-    if ((millis() - recentButtonChangeTime) > armedTimeout) {
-      updateControllerState(DISARMED);
-      disableUART();
-
-      debug("++++++ disableUART() CALLED ++++++++ ", DEBUG_PRIORITY_LOW);
-
-      debug("8) Controller state updated from ARMED to DISARMED (>timeout): " +
-                controllerStateToString(),
-            DEBUG_PRIORITY_HIGH);
-      return;
-    }
-  }
 }
 
 /**
@@ -906,6 +894,7 @@ void transmitCommands(ButtonState recentButton) {
 
   if (currentControllerState.controllerState == BUTTON_0_STUCK_DOWN) {
     // Send 'G' command 10 times at intervals defined by timeBetweenCommands
+
     if (gCommandCounter < 10) {
       if (currentTime - lastGCommandTime >= timeBetweenCommands) {
         sendUARTMessage('G');
