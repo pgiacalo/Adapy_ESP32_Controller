@@ -1,16 +1,28 @@
-#include "BluetoothSerial.h"
+/** 
+ * A sketch written for the ESP32 Dev Module that replicates the behaviors 
+ * and proprietary UART output signals of an existing 7-button controller. 
+ * The existing controller is connected to a black box that drives 
+ * motors that move and posiion a car seat. 
+ *
+ * Author: Philip Giacalone
+ * Date: June 21, 2024
+ * Version: 1.0
+ * Description: Initial release of this software to the client
+ */
+
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "LEDControl.h"
 
 // Uncomment the following line to run automated tests
-// #define TESTING_PUBLIC_INTERFACE
+//#define TESTING_PUBLIC_INTERFACE
 
 // It is not known whether or not power-up signal pulses are required. 
-// So this boolean flag is provided to easily turn them ON or OFF. 
-// Note: Turning them OFF decreases startup time by ~7 seconds.
-bool SEND_POWER_UP_PULSES = true;
+// So this boolean flag (SEND_POWER_UP_PULSES) is provided to easily 
+// turn them ON or OFF. 
+// Note: Turning these pulses ON increases startup time by ~7 seconds.
+bool SEND_POWER_UP_PULSES = false;
 
 // Debug levels
 constexpr int DEBUG_PRIORITY_HIGH = 3;
@@ -29,7 +41,7 @@ const char commands[] = {'G', 'A', 'D', 'E', 'B', 'F', 'C'};
 
 // Custom UART pins (avoiding the Serial Tx/Rx pins used for console output)
 constexpr int uartTxPin = 17;
-constexpr int uartRxPin = 16;
+constexpr int uartRxPin = 16;   //NOTE: the Rx pin is NOT used, since we're assuming the legacy controller on sends signals.
 constexpr int uartEnabledDelay = 150; // milliseconds - the time between enabling the uart and the first signal transmissions
 bool isUartEnabled = false;
 
@@ -772,6 +784,7 @@ void initializeControllerState() {
   debug("initializeControllerState() initialized state to: " + controllerStateToString(),
         DEBUG_PRIORITY_HIGH);
 }
+
 void handleControllerStateTransitions(ButtonState recentButton) {
     if (recentButton.buttonId == -1) {
         // Ignore this. ButtonId -1 indicates there were NO recent button events.
