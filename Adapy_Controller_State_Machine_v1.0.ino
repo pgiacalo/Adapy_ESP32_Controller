@@ -7,8 +7,9 @@
 // Uncomment the following line to run automated tests
 // #define TESTING_PUBLIC_INTERFACE
 
-// It is not clear whether power-up signal pulses are required. 
+// It is not known whether or not power-up signal pulses are required. 
 // So this boolean flag is provided to easily turn them ON or OFF. 
+// Note: Turning them OFF decreases startup time by ~7 seconds.
 bool SEND_POWER_UP_PULSES = true;
 
 // Debug levels
@@ -184,8 +185,6 @@ void setup() {
   debug("setup() calling initializeControllerState()", DEBUG_PRIORITY_LOW);
   initializeControllerState();
 
-  ledBehavior = LED_BEHAVIOR_OFF;
-
   //it's not clear whether or not these pulses are required at power-up
   if (SEND_POWER_UP_PULSES){
     sendPowerUpPulses();
@@ -193,6 +192,8 @@ void setup() {
 
   debug("setup() complete", DEBUG_PRIORITY_HIGH);
   debug(controllerStateToString(), DEBUG_PRIORITY_HIGH);
+
+  ledBehavior = LED_BEHAVIOR_OFF;
 
   #ifdef TESTING_PUBLIC_INTERFACE
     // Create the test task
