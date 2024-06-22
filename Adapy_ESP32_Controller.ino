@@ -144,7 +144,8 @@ ButtonState scanButtonStates();
 void initializeButtonPins();
 void initializeButtonStates();
 void initializeControllerState();
-void initUART();
+void initUART(HardwareSerial &serial, long baudRate, int txPin, int rxPin);
+// void initUART();
 void enableUART();
 void disableUART();
 bool updateControllerState(ControllerStateEnum newState);
@@ -357,21 +358,27 @@ void onButtonUp(int buttonId) {
 }
 
 void onVirtualButtonDown(int buttonId) {
-  if (currentControllerState.lockOwner == VIRTUAL) {
-    // a virtual/remote user is actively calling this code. 
-    // so we'll reset the lockOwnerTimestamp so it doesn't time out.
-    currentControllerState.lockOwnerTimestamp = millis();
-    updateButtonState(buttonId, BUTTON_DOWN);
+  if (currentControllerState.lockOwner != VIRTUAL) {
+    debug("Error: Attempt to press virtual button " + String(buttonId) + " when lock owner is not VIRTUAL.", DEBUG_PRIORITY_HIGH);
+    // Optionally add additional error handling, like setting an error flag or state
+    return; // Exit the function to avoid further processing
   }
+
+  // Update the button state if the lock owner is virtual
+  currentControllerState.lockOwnerTimestamp = millis(); // Reset the timeout to prevent accidental timeout
+  updateButtonState(buttonId, BUTTON_DOWN);
 }
 
 void onVirtualButtonUp(int buttonId) {
-  if (currentControllerState.lockOwner == VIRTUAL) {
-    // a virtual/remote user is actively calling this code. 
-    // so we'll reset the lockOwnerTimestamp so it doesn't time out.
-    currentControllerState.lockOwnerTimestamp = millis();
-    updateButtonState(buttonId, BUTTON_UP);
+  if (currentControllerState.lockOwner != VIRTUAL) {
+    debug("Error: Attempt to release virtual button " + String(buttonId) + " when lock owner is not VIRTUAL.", DEBUG_PRIORITY_HIGH);
+    // Optionally add additional error handling here as well
+    return; // Exit the function to avoid further processing
   }
+
+  // Update the button state if the lock owner is virtual
+  currentControllerState.lockOwnerTimestamp = millis(); // Reset the timeout to keep the virtual control active
+  updateButtonState(buttonId, BUTTON_UP);
 }
 
 /** Utility function */
