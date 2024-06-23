@@ -341,6 +341,11 @@ void sendPowerUpPulses() {
     //we end with the output LOW
 }
 
+/**
+ * This function is designed to be called by the code that receives 
+ * bluetooth button DOWN commands from a remote client.
+ * It is specifically NOT designed to handle local button events.
+ */ 
 void onButtonDown(int buttonId) {
   if (currentControllerState.lockOwner == PHYSICAL) {
     debug("Error: onButtonDown called in PHYSICAL mode for virtual button " + String(buttonId) + ". This function should only be called in VIRTUAL mode.", DEBUG_PRIORITY_HIGH);
@@ -349,6 +354,11 @@ void onButtonDown(int buttonId) {
   onVirtualButtonDown(buttonId);
 }
 
+/**
+ * This function is designed to be called by the code that receives 
+ * bluetooth button UP commands from a remote client.
+ * It is specifically NOT designed to handle local button events.
+ */ 
 void onButtonUp(int buttonId) {
   if (currentControllerState.lockOwner == PHYSICAL) {
     debug("Error: onButtonUp called in PHYSICAL mode for virtual button " + String(buttonId) + ". This function should only be called in VIRTUAL mode.", DEBUG_PRIORITY_HIGH);
