@@ -16,7 +16,7 @@
 #include "LEDControl.h"
 
 // Uncomment the following line to run automated tests
-//#define TESTING_PUBLIC_INTERFACE
+#define TESTING_PUBLIC_INTERFACE
 
 // It is not known whether or not power-up signal pulses are required. 
 // So this boolean flag (SEND_POWER_UP_PULSES) is provided to easily 
@@ -124,6 +124,7 @@ void setPhysicalLockOwner();
 void onButtonDown(int buttonId);
 void onButtonUp(int buttonId);
 void setArmedTimeout(unsigned int timeout);
+bool isArmed();
 unsigned int getArmedTimeout();
 ControllerLockOwner getLockOwner();
 String buttonStateToString(const ButtonState &button); // returns the state of the given button (the values from the ButtonState struct)
@@ -290,6 +291,16 @@ void checkLockOwnerTimeout() {
     debug("Lock owner timed out, reset to " + ownerStr, DEBUG_PRIORITY_LOW);
     currentControllerState.lockOwnerTimestamp = millis(); // Reset the lockOwnerTimestamp to now
   }
+}
+
+/**
+ * Returns true if the controller state is Armed or Transmitting, else false
+ */
+bool isArmed() {
+  if (currentControllerState.controllerState == ARMED || currentControllerState.controllerState == TRANSMITTING){
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -1151,6 +1162,9 @@ void testPublicInterface() {
   custom_assert(currentControllerState.controllerState == DISARMED,
                 "Initial state should be DISARMED in TEST 3");
 
+  custom_assert(isArmed() == false,
+                "isArmed() should return false in TEST 3");
+
   Serial.println("Pushing button 0 (DOWN)");
   onButtonDown(0);
   delay(60); // Wait for 60 milliseconds
@@ -1162,6 +1176,9 @@ void testPublicInterface() {
   Serial.println(controllerStateToString());
   custom_assert(currentControllerState.controllerState == ARMED,
                 "State should be ARMED after button 0 is released in TEST 3");
+
+  custom_assert(isArmed() == true,
+                "isArmed() should return true in TEST 3");
 
   delay(10000); // Wait for 10 seconds
   Serial.println(controllerStateToString());
