@@ -16,7 +16,7 @@
 #include "LEDControl.h"
 
 // Uncomment the following line to run automated tests
-#define TESTING_PUBLIC_INTERFACE
+//#define TESTING_PUBLIC_INTERFACE
 
 // It is not known whether or not power-up signal pulses are required. 
 // So this boolean flag (SEND_POWER_UP_PULSES) is provided to easily 
