@@ -228,8 +228,8 @@ void setup() {
 }
 
 void setupBluetooth() {
-    // Initialize Bluetooth with the device name "ESP32_BT_Commander"
-    String bluetoothName = "ESP32_BT_Commander";
+    // Initialize Bluetooth with the device name "Adapy_BT_Commander"
+    String bluetoothName = "Adapy_BT_Commander";
     if (!SerialBT.begin(bluetoothName)) {
         Serial.println("Bluetooth init failed!");
         return;
