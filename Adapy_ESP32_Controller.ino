@@ -4,10 +4,16 @@
  * The existing controller is connected to a black box that drives 
  * motors that move and position a car seat. 
  *
+ * Version 1.2 adds preliminary bluetooth support. Note that builds that
+ * include bluetooth consumes 86% of program storage space on an ESP32.
+ * This compares to about 24% without bluetooth support. The included library
+ * (BluetoothSerial.h) appears to be responsible for almost all of this 
+ * additional proram space consumption.
+ * 
  * Author: Philip Giacalone
- * Date: June 21, 2024
- * Version: 1.0
- * Description: Initial release of this software to the client
+ * Date: July 5, 2024
+ * Version: 1.2
+ * Description: Added bluetooth support (sufficient for initial testing)
  */
 
 #include <Arduino.h>
@@ -242,6 +248,9 @@ void setupBluetooth() {
 }
 
 void handleBluetoothCommand(String command) {
+    // reset the lockOwnerTimestamp, since the remote user just sent a command
+    currentControllerState.lockOwnerTimestamp = millis();
+
     if (command.startsWith("UP_")) {
         int buttonId = command.substring(3).toInt();
         if (buttonId >= 0 && buttonId <= 6) {
@@ -252,17 +261,17 @@ void handleBluetoothCommand(String command) {
         if (buttonId >= 0 && buttonId <= 6) {
             onButtonDown(buttonId);
         }
-    } else if (command.startsWith("VIR")) {
+    } else if (command.equals("VIR")) {
         int buttonId = command.substring(3).toInt();
         if (buttonId >= 0 && buttonId <= 6) {
             setVirtualLockOwner();
         }
-    } else if (command.startsWith("PHY")) {
+    } else if (command.equals("PHY")) {
         int buttonId = command.substring(3).toInt();
         if (buttonId >= 0 && buttonId <= 6) {
             setPhysicalLockOwner();
         }
-    } else if (command.startsWith("ARM")) {
+    } else if (command.equals("ARM")) {
         int buttonId = command.substring(3).toInt();
         if (buttonId >= 0 && buttonId <= 6) {
             armVirtual();
@@ -594,6 +603,9 @@ void disableUART() {
 // Send a character over UART (this sends the command to the Adapt Solutions
 // black box)
 void sendUARTMessage(char message) {
+  // reset the lockOwnerTimestamp, since the user is sending a message
+  currentControllerState.lockOwnerTimestamp = millis();
+
   if (uartSerialPort.availableForWrite()) {
     String formattedMessage = formatMessage(message);
     enableUART();
