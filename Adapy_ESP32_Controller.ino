@@ -14,6 +14,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "LEDControl.h"
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
 
 // Uncomment the following line to run automated tests
 //#define TESTING_PUBLIC_INTERFACE
@@ -113,12 +116,13 @@ const unsigned int timeBetweenCommands = 337; // milliseconds, time between comm
 static unsigned int armedTimeout = 8500; // milliseconds
 const unsigned int button0HoldThreshold = 8500; // 8 seconds threshold
 const unsigned int debounceDelay = 50;      // 50 milliseconds debounce delay
-const unsigned int ownerLockTimeout = 60000; // milliseconds
+const unsigned int ownerLockTimeout = 20000; // milliseconds
 
 
 // ==============================================
 // PUBLIC API - FUNCTIONS YOU CAN SAFELY CALL
 // ==============================================
+void armVirtual();
 void setVirtualLockOwner();
 void setPhysicalLockOwner();
 void onButtonDown(int buttonId);
@@ -209,10 +213,63 @@ void setup() {
 
   ledBehavior = LED_BEHAVIOR_OFF;
 
+  setupBluetooth();
+
   #ifdef TESTING_PUBLIC_INTERFACE
     // Create the test task
     xTaskCreate(testTask, "Test Task", 2048, NULL, 1, NULL);
   #endif
+}
+
+void setupBluetooth() {
+    // Initialize Bluetooth with the device name "ESP32_BT_Commander"
+    String bluetoothName = "ESP32_BT_Commander";
+    if (!SerialBT.begin(bluetoothName)) {
+        Serial.println("Bluetooth init failed!");
+        return;
+    }
+
+    Serial.println("Bluetooth initialized, device is discoverable as " + bluetoothName);
+
+    // Register the callback to handle Bluetooth data reception
+    SerialBT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
+        if (event == ESP_SPP_DATA_IND_EVT) {
+            String receivedData = SerialBT.readStringUntil('\n');
+            receivedData.trim(); // Trim the data in-place
+            handleBluetoothCommand(receivedData); // Now pass the trimmed string to handleCommand
+        }
+    });
+}
+
+void handleBluetoothCommand(String command) {
+    if (command.startsWith("UP_")) {
+        int buttonId = command.substring(3).toInt();
+        if (buttonId >= 0 && buttonId <= 6) {
+            onButtonUp(buttonId);
+        }
+    } else if (command.startsWith("DN_")) {
+        int buttonId = command.substring(3).toInt();
+        if (buttonId >= 0 && buttonId <= 6) {
+            onButtonDown(buttonId);
+        }
+    } else if (command.startsWith("VIR")) {
+        int buttonId = command.substring(3).toInt();
+        if (buttonId >= 0 && buttonId <= 6) {
+            setVirtualLockOwner();
+        }
+    } else if (command.startsWith("PHY")) {
+        int buttonId = command.substring(3).toInt();
+        if (buttonId >= 0 && buttonId <= 6) {
+            setPhysicalLockOwner();
+        }
+    } else if (command.startsWith("ARM")) {
+        int buttonId = command.substring(3).toInt();
+        if (buttonId >= 0 && buttonId <= 6) {
+            armVirtual();
+        }
+    } else {
+      debug("Bluetooth command received but not recognized: " + command, DEBUG_PRIORITY_HIGH);
+    }
 }
 
 void loop() {
@@ -238,7 +295,18 @@ void loop() {
   yield(); // gives other tasks a chance to run
 }
 
+/**
+ * Arms the controller by pressing and releasing Button 0.
+ * This function shall only be called by remote clients.
+ */
+void armVirtual(){
+  onButtonDown(0);
+  delay(100);
+  onButtonUp(0);
+}
+
 void setPhysicalLockOwner() {
+  debug("setPhysicalLockOwner() called)", DEBUG_PRIORITY_HIGH);
   if (currentControllerState.lockOwner == VIRTUAL){
     setLockOwner(PHYSICAL);
     //fast blink the GREEN LED as an indication that the physical controller is ready for use
@@ -248,6 +316,7 @@ void setPhysicalLockOwner() {
 }
 
 void setVirtualLockOwner() {
+  debug("setVirtualLockOwner() called)", DEBUG_PRIORITY_HIGH);
   if (currentControllerState.lockOwner == PHYSICAL){
     setLockOwner(VIRTUAL);
     //turn on the LED RED as an indication that the physical controller buttons are turned off
@@ -256,7 +325,9 @@ void setVirtualLockOwner() {
   }
 }
 
-ControllerLockOwner getLockOwner() { return currentControllerState.lockOwner; }
+ControllerLockOwner getLockOwner() { 
+  return currentControllerState.lockOwner; 
+}
 
 void setLockOwner(ControllerLockOwner newOwner) {
   if (currentControllerState.lockOwner != newOwner) {
@@ -265,11 +336,13 @@ void setLockOwner(ControllerLockOwner newOwner) {
     // Reinitialize button states when the owner changes
     initializeButtonStates();
     String ownerStr = (newOwner == PHYSICAL) ? "PHYSICAL" : "VIRTUAL";
-    debug("Lock owner changed to " + ownerStr +
-              " and button states initialized",
-          DEBUG_PRIORITY_LOW);
+    debug("Lock owner changed to " + ownerStr + " and button states initialized",
+          DEBUG_PRIORITY_HIGH);
+    debug("Current controller state: " + controllerStateToString(), DEBUG_PRIORITY_HIGH);
+
   } else {
-    currentControllerState.lockOwnerTimestamp = millis();
+    debug("Lock owner NOT changed.", DEBUG_PRIORITY_HIGH);
+    // currentControllerState.lockOwnerTimestamp = millis(); //TODO is reseting the lockOwnerTimestamp a bug?
   }
 }
 
@@ -285,11 +358,13 @@ unsigned int getArmedTimeout() {
 
 // Checks if lockOwner has timed out. If timedout, set it to DEFAULT_LOCK_OWNER.
 void checkLockOwnerTimeout() {
-  if (millis() - currentControllerState.lockOwnerTimestamp > ownerLockTimeout) {
-    setLockOwner(DEFAULT_LOCK_OWNER);
-    String ownerStr = (DEFAULT_LOCK_OWNER == PHYSICAL) ? "PHYSICAL" : "VIRTUAL";
-    debug("Lock owner timed out, reset to " + ownerStr, DEBUG_PRIORITY_LOW);
-    currentControllerState.lockOwnerTimestamp = millis(); // Reset the lockOwnerTimestamp to now
+  if (millis() - currentControllerState.lockOwnerTimestamp > ownerLockTimeout && currentControllerState.lockOwner != DEFAULT_LOCK_OWNER) {    
+    debug("Lock owner timed out", DEBUG_PRIORITY_HIGH);
+    if (DEFAULT_LOCK_OWNER == PHYSICAL){
+      setPhysicalLockOwner();
+    } else if (DEFAULT_LOCK_OWNER == VIRTUAL){
+      setVirtualLockOwner();
+    }
   }
 }
 
@@ -354,7 +429,7 @@ void sendPowerUpPulses() {
 
 /**
  * This function is designed to be called by the code that receives 
- * bluetooth button DOWN commands from a remote client.
+ * button DOWN commands from a remote wireless client.
  * It is specifically NOT designed to handle local button events.
  */ 
 void onButtonDown(int buttonId) {
@@ -367,7 +442,7 @@ void onButtonDown(int buttonId) {
 
 /**
  * This function is designed to be called by the code that receives 
- * bluetooth button UP commands from a remote client.
+ * button UP commands from a remote wireless client.
  * It is specifically NOT designed to handle local button events.
  */ 
 void onButtonUp(int buttonId) {
