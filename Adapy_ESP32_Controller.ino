@@ -519,6 +519,9 @@ void disableUART() {
 // Send a character over UART (this sends the command to the Adapt Solutions
 // black box)
 void sendUARTMessage(char message) {
+  // reset the lockOwnerTimestamp, since the user is sending a message
+  currentControllerState.lockOwnerTimestamp = millis();
+
   if (uartSerialPort.availableForWrite()) {
     String formattedMessage = formatMessage(message);
     enableUART();
